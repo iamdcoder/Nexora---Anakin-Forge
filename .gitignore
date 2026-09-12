@@ -13,9 +13,9 @@ __pycache__/
 .venv/
 venv/
 
-# Runtime data / generated artifacts
-data/*.jsonl
-data/*.pdf
+# Runtime data / generated artifacts (any depth, e.g. backend/data/)
+**/data/*.jsonl
+**/data/*.pdf
 
 # Node / frontend
 node_modules/

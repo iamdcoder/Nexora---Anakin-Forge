@@ -585,10 +585,80 @@ def _score_price(
 
         return 0.0
 
-    return _score_range(
-        buyer.price.target,
-        overlap_min,
+    # A feasible price overlap exists. Price is not a "closer to the
+    # midpoint is best" dimension like delivery/payment/SLA — for the
+    # buyer, cheaper is always strictly better, never "too cheap" in
+    # the way a delivery date can be "too soon" relative to a target.
+    # Re-using `_score_range`'s centrality formula here (as the
+    # original implementation did) silently zeroes out the score
+    # whenever the buyer's target sits outside the overlap window —
+    # which is the *expected*, common case, since a buyer's target is
+    # an aspirational anchor and is supposed to sit below what any
+    # supplier's floor can actually offer. That's what the negotiation
+    # stage exists to close. A hard zero there wrongly treats a
+    # negotiable gap as a disqualifying incompatibility.
+    #
+    # Instead, score monotonically: lower achievable prices are always
+    # better, never penalized. Blend two monotonic signals:
+    #   - floor_component: how favorable the cheapest price actually
+    #     achievable in the overlap (`overlap_min`) is, relative to the
+    #     buyer's own full acceptable band.
+    #   - asking_component: how favorable the supplier's own price
+    #     target is within the overlap, so two suppliers with the same
+    #     floor but a cheaper asking price/ceiling still differentiate.
+    # Both are 1.0 for the cheapest possible outcome and taper toward
+    # 0.0 for the most expensive outcome still inside the overlap —
+    # never dropping below 0.0 or hitting an artificial hard zero.
+
+    buyer_band = max(
+        1,
+        buyer_max - buyer_min,
+    )
+
+    floor_component = max(
+        0.0,
+        min(
+            1.0,
+            1.0
+            - (
+                (overlap_min - buyer_min)
+                / buyer_band
+            ),
+        ),
+    )
+
+    overlap_width = max(
+        1,
+        overlap_max - overlap_min,
+    )
+
+    clamped_supplier_target = min(
+        max(
+            supplier.price.target,
+            overlap_min,
+        ),
         overlap_max,
+    )
+
+    asking_component = max(
+        0.0,
+        min(
+            1.0,
+            1.0
+            - (
+                (clamped_supplier_target - overlap_min)
+                / overlap_width
+            ),
+        ),
+    )
+
+    return round(
+        (
+            floor_component
+            + asking_component
+        )
+        / 2,
+        4,
     )
 
 
