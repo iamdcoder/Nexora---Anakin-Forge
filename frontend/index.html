@@ -3178,7 +3178,17 @@ function App(){
 
     suppliers:
       options.suppliers
-      ||AUTONOMOUS_SUPPLIERS,
+      ||[
+        {
+          name:supplierName,
+          source_url:SUPPLIER_SOURCES[0],
+          policy:supplier,
+          description:
+            "Candidate supplier for autonomous procurement."
+        },
+        AUTONOMOUS_SUPPLIERS[1],
+        AUTONOMOUS_SUPPLIERS[2]
+      ],
 
     buyer:
       options.buyer
@@ -3194,9 +3204,20 @@ function App(){
 
     minimum_supplier_score:0.3,
 
+    // "simulation" runs the deterministic bilateral-concession
+    // engine, which always converges instantly to either a real
+    // agreement or a clear "no feasible range" result. "auto" (when
+    // Lyzr credentials are configured) hands the negotiation to real,
+    // live LLM agents instead, which can legitimately fail to reach
+    // an explicit agreed state within the round limit - that's a
+    // property of live multi-turn AI negotiation, not a bug, but it
+    // makes ad-hoc testing feel random. Default here to the
+    // deterministic engine so editing Buyer/Supplier Policy and
+    // hitting Run behaves predictably; explicit callers (like the
+    // flagship judge demo) can still opt into "auto" on purpose.
     execution_mode:
       options.execution_mode
-      ||"auto"
+      ||"simulation"
   });
 
   const run=()=>{
