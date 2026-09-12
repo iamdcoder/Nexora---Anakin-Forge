@@ -77,12 +77,47 @@ app = FastAPI(
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_INDEX = PROJECT_ROOT / "frontend" / "index.html"
 
-_cors_origins = [x.strip() for x in os.getenv("CORS_ORIGINS", "*").split(",") if x.strip()]
+DATA_DIR = Path(
+    os.getenv("NEXORA_DATA_DIR", str(PROJECT_ROOT / "data"))
+).expanduser()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def runtime_path(filename: str) -> Path:
+    """Return a path inside the configured runtime artifact directory."""
+    safe_name = Path(filename).name
+    return DATA_DIR / safe_name
+
+_default_cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+_cors_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        ",".join(_default_cors_origins),
+    ).split(",")
+    if origin.strip()
+]
+
+_public_base_url = os.getenv(
+    "PUBLIC_BASE_URL",
+    "",
+).strip().rstrip("/")
+
+if _public_base_url and _public_base_url not in _cors_origins:
+    _cors_origins.append(_public_base_url)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    allow_credentials=False,
 )
 app.include_router(autonomous_read_router)
 app.include_router(autonomous_reason_router)
@@ -117,6 +152,8 @@ class NegotiationRequest(BaseModel):
     )
 
     quantity: int = 1000
+
+    negotiation_context: str = ""
 
     execution_mode: Literal[
         "auto",
@@ -553,12 +590,62 @@ def root():
         raise HTTPException(status_code=404, detail="Frontend bundle not found")
     return FileResponse(FRONTEND_INDEX, media_type="text/html")
 
+def _runtime_readiness() -> dict:
+    buyer_agent_id = os.getenv("BUYER_AGENT_ID", "").strip()
+    supplier_agent_id = os.getenv("SUPPLIER_AGENT_ID", "").strip()
+    lyzr_key = os.getenv("LYZR_API_KEY", "").strip()
+    anakin_enabled = os.getenv("ANAKIN_ENABLED", "1") == "1"
+    anakin_key = os.getenv("ANAKIN_API_KEY", "").strip()
+
+    checks = {
+        "frontend": FRONTEND_INDEX.exists(),
+        "buyer_agent": bool(buyer_agent_id),
+        "supplier_agent": bool(supplier_agent_id),
+        "lyzr_api_key": bool(lyzr_key),
+        "anakin": (
+            not anakin_enabled
+            or bool(anakin_key)
+            or os.getenv("ANAKIN_FALLBACK_DIRECT", "1") == "1"
+        ),
+    }
+
+    return {
+        "ready": all(checks.values()),
+        "checks": checks,
+        "anakin_enabled": anakin_enabled,
+    }
+
+
 @app.get("/health")
 def health():
     return {
         "status": "ok",
         "service": "nexora-negotiator",
         "version": app.version,
+        "data_dir": str(DATA_DIR),
+    }
+
+
+@app.get("/ready")
+def readiness():
+    readiness_state = _runtime_readiness()
+
+    if not readiness_state["ready"]:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "not_ready",
+                "service": "nexora-negotiator",
+                **readiness_state,
+            },
+        )
+
+    return {
+        "status": "ready",
+        "service": "nexora-negotiator",
+        "version": app.version,
+        "data_dir": str(DATA_DIR),
+        **readiness_state,
     }
 
 @app.get("/ui", include_in_schema=False)
@@ -580,8 +667,7 @@ def start_negotiation(
     )
 
     audit_path = (
-        Path("data")
-        / f"audit_{neg_id}.jsonl"
+        runtime_path(f"audit_{neg_id}.jsonl")
     )
 
     audit_logger = AuditLogger(
@@ -688,7 +774,8 @@ def start_negotiation(
                 private_policy=request.buyer,
                 session_id=f"{neg_id}-buyer",
                 shared_context={
-                    "negotiation_id": neg_id
+                    "negotiation_id": neg_id,
+                    "autonomous_reasoning_context": request.negotiation_context,
                 },
             )
 
@@ -697,7 +784,8 @@ def start_negotiation(
                 private_policy=request.supplier,
                 session_id=f"{neg_id}-supplier",
                 shared_context={
-                    "negotiation_id": neg_id
+                    "negotiation_id": neg_id,
+                    "autonomous_reasoning_context": request.negotiation_context,
                 },
             )
 
@@ -851,8 +939,7 @@ def start_negotiation(
         )
 
         pdf_file = (
-            Path("data")
-            / f"contract_{neg_id}.pdf"
+            runtime_path(f"contract_{neg_id}.pdf")
         )
 
         try:
@@ -1211,7 +1298,7 @@ def run_rfq(request: RFQRequest):
         buyer_agent = SimulationBuyerAgent(request.buyer)
         supplier_agent = SimulationSupplierAgent(supplier_policy)
         neg_id = f"RFQ-{uuid.uuid4().hex[:8].upper()}"
-        logger = AuditLogger(path=str(Path("data") / f"audit_{neg_id}.jsonl"))
+        logger = AuditLogger(path=str(runtime_path(f"audit_{neg_id}.jsonl")))
         engine = NegotiationEngine(
             buyer_policy=request.buyer,
             supplier_policy=supplier_policy,

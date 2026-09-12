@@ -282,8 +282,16 @@ def test_recovery_reasons_again_and_retries_next_supplier(
         is None
     )
 
+    failed_supplier = act_calls[0]
+    recovered_supplier = act_calls[1]
+
     assert (
-        "Supplier B"
+        failed_supplier
+        != recovered_supplier
+    )
+
+    assert (
+        failed_supplier
         in reason_calls[1]
     )
 
@@ -317,6 +325,15 @@ def test_recovery_reasons_again_and_retries_next_supplier(
         ]
         == "REASON_AGAIN"
     )
+
+    assert result.failure_provenance[0].code == "VERIFY_FAIL"
+    assert result.failure_provenance[0].stage == "VERIFY"
+    assert result.failure_provenance[0].attempt == 1
+    assert (
+        result.failure_provenance[0].supplier
+        == act_calls[0]
+    )
+    assert result.failure_provenance[0].recoverable is True
 
     assert (
         result.attempts[0]
@@ -377,3 +394,198 @@ def test_recovery_does_not_retry_same_supplier(
         result.status
         == "recovery_exhausted"
     )
+
+def test_recovery_classifies_verification_failure(monkeypatch):
+
+    monkeypatch.setattr(
+        procure_module,
+        "reason_about_procurement",
+        lambda intake, **kwargs: reasoning(),
+    )
+
+    monkeypatch.setattr(
+        procure_module,
+        "act_on_procurement",
+        lambda req: action(),
+    )
+
+    monkeypatch.setattr(
+        procure_module,
+        "verify_autonomous_action",
+        lambda req: verification(
+            False,
+            [
+                "Final terms violate buyer policy constraints."
+            ],
+        ),
+    )
+
+    result = procure_module.procure(
+        request().model_copy(
+            update={
+                "max_attempts": 1,
+            }
+        )
+    )
+
+    assert result.verified is False
+
+    assert result.failure_code == "POLICY_BLOCK"
+
+    assert result.attempts[0].failure_code == "POLICY_BLOCK"
+
+
+def test_recovery_exhaustion_is_bounded_and_classified(monkeypatch):
+
+    reason_calls = []
+
+    def fake_reason(intake, **kwargs):
+        reason_calls.append(kwargs.get("failure_context"))
+        return reasoning()
+
+    monkeypatch.setattr(
+        procure_module,
+        "reason_about_procurement",
+        fake_reason,
+    )
+
+    monkeypatch.setattr(
+        procure_module,
+        "act_on_procurement",
+        lambda req: action(),
+    )
+
+    monkeypatch.setattr(
+        procure_module,
+        "verify_autonomous_action",
+        lambda req: verification(
+            False,
+            [
+                "Final delivery exceeds buyer maximum delivery period."
+            ],
+        ),
+    )
+
+    result = procure_module.procure(
+        request().model_copy(
+            update={
+                "max_attempts": 2,
+            }
+        )
+    )
+
+    assert result.verified is False
+    assert result.status == "recovery_exhausted"
+    assert len(result.attempts) == 2
+    assert all(
+        item.failure_code == "VERIFY_FAIL"
+        for item in result.attempts
+    )
+    assert result.failure_code == "VERIFY_FAIL"
+    assert len(reason_calls) == 2
+
+
+def test_failure_provenance_records_act_failure(monkeypatch):
+
+    monkeypatch.setattr(
+        procure_module,
+        "reason_about_procurement",
+        lambda intake, **kwargs: reasoning(),
+    )
+
+    monkeypatch.setattr(
+        procure_module,
+        "act_on_procurement",
+        lambda req: (_ for _ in ()).throw(
+            RuntimeError("Lyzr provider timeout")
+        ),
+    )
+
+    result = procure_module.procure(
+        request().model_copy(
+            update={"max_attempts": 1}
+        )
+    )
+
+    assert result.verified is False
+    assert result.failure_code == "TIMEOUT"
+    assert len(result.failure_provenance) == 1
+    assert result.failure_provenance[0].stage == "ACT"
+    assert result.failure_provenance[0].code == "TIMEOUT"
+    assert result.failure_provenance[0].recoverable is False
+
+
+def test_failure_provenance_records_recovery_failure(monkeypatch):
+
+    monkeypatch.setattr(
+        procure_module,
+        "reason_about_procurement",
+        lambda intake, **kwargs: (
+            (_ for _ in ()).throw(
+                RuntimeError("Lyzr reasoning failed")
+            )
+            if kwargs.get("failure_context")
+            else reasoning()
+        ),
+    )
+
+    monkeypatch.setattr(
+        procure_module,
+        "act_on_procurement",
+        lambda req: (_ for _ in ()).throw(
+            RuntimeError("initial Lyzr failure")
+        ),
+    )
+
+    result = procure_module.procure(
+        request().model_copy(
+            update={"max_attempts": 2}
+        )
+    )
+
+    assert result.verified is False
+    assert any(
+        item.stage == "RECOVERY"
+        and item.code == "LYZR_ERROR"
+        for item in result.failure_provenance
+    )
+    assert result.failure_code == "LYZR_ERROR"
+
+
+def test_simulation_supplier_read_does_not_hit_live_network(
+    monkeypatch,
+):
+
+    def fail_live_fetch(url):
+        raise AssertionError(
+            "Simulation mode must not call the live supplier URL."
+        )
+
+    monkeypatch.setattr(
+        "autonomous.read._fetch_source",
+        fail_live_fetch,
+    )
+
+    monkeypatch.setattr(
+        procure_module,
+        "reason_about_procurement",
+        lambda intake, **kwargs: reasoning(),
+    )
+
+    monkeypatch.setattr(
+        procure_module,
+        "act_on_procurement",
+        lambda req: action(),
+    )
+
+    monkeypatch.setattr(
+        procure_module,
+        "verify_autonomous_action",
+        lambda req: verification(True),
+    )
+
+    result = procure_module.procure(
+        request()
+    )
+
+    assert result.verified is True

@@ -183,3 +183,84 @@ def test_incompatible_price_is_flagged():
         in flag.lower()
         for flag in ranked[0].risk_flags
     )
+
+
+def test_reasoning_priorities_influence_supplier_selection():
+
+    buyer = make_buyer()
+
+    buyer.price.target = 108000
+
+    delivery_first = make_reasoning()
+
+    delivery_first.priorities = [
+        "delivery timeline",
+        "price",
+        "sla",
+    ]
+
+    price_first = make_reasoning()
+
+    price_first.priorities = [
+        "price",
+        "delivery timeline",
+        "sla",
+    ]
+
+    suppliers = [
+        supplier(
+            "Fast Supplier",
+            100000,
+            115000,
+            120000,
+            30,
+        ),
+        supplier(
+            "Cheap Supplier",
+            100000,
+            105000,
+            116000,
+            38,
+        ),
+    ]
+
+    delivery_ranked = rank_suppliers(
+        delivery_first,
+        suppliers,
+        buyer,
+    )
+
+    price_ranked = rank_suppliers(
+        price_first,
+        suppliers,
+        buyer,
+    )
+
+    assert (
+        delivery_ranked[0].supplier.name
+        == "Fast Supplier"
+    )
+
+    assert (
+        price_ranked[0].supplier.name
+        == "Cheap Supplier"
+    )
+
+    assert (
+        delivery_ranked[0]
+        .scoring_weights["delivery"]
+        > delivery_ranked[0]
+        .scoring_weights["price"]
+    )
+
+    assert (
+        price_ranked[0]
+        .scoring_weights["price"]
+        > price_ranked[0]
+        .scoring_weights["delivery"]
+    )
+
+    assert (
+        delivery_ranked[0]
+        .selection_rationale
+    )

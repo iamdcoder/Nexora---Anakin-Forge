@@ -102,10 +102,17 @@ def test_reasoning_merges_ai_strategy_without_removing_deterministic_constraints
         in result.hard_constraints
     )
 
-    assert any(
+    assert not any(
         item.source == "ai_reasoning"
         for item
         in result.hard_constraints
+    )
+
+    assert any(
+        "AI-suggested hard constraint is advisory only"
+        in risk
+        for risk
+        in result.risks
     )
 
     assert (

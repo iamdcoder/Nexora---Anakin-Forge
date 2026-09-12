@@ -1,0 +1,28 @@
+# Environments / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Runtime data / generated artifacts
+data/*.jsonl
+data/*.pdf
+
+# Node / frontend
+node_modules/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+
+# Packaging
+*.zip

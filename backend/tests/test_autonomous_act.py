@@ -1,5 +1,7 @@
 from autonomous.act import (
     ActRequest,
+    _build_negotiation_request,
+    _build_strategy_context,
     _has_critical_missing_information,
     _resolve_product_name,
     _resolve_quantity,
@@ -169,3 +171,49 @@ def test_act_request_contains_reasoning():
     )
 
     assert request.reasoning.confidence == 0.90
+
+def test_strategy_context_contains_ai_reasoning_without_private_policy_values():
+
+    reasoning = make_reasoning()
+    reasoning.recommended_strategy = (
+        "Protect delivery first and trade price second."
+    )
+    reasoning.supplier_evaluation_factors = [
+        "delivery fit",
+        "SLA fit",
+    ]
+
+    context = _build_strategy_context(
+        reasoning
+    )
+
+    assert (
+        "Protect delivery first"
+        in context
+    )
+
+    assert "delivery fit" in context
+    assert "SLA fit" in context
+    assert "BATNA" not in context
+
+
+def test_negotiation_request_receives_reasoning_strategy():
+
+    request = make_request()
+    request.reasoning.recommended_strategy = (
+        "Protect delivery first and trade price second."
+    )
+
+    negotiation_request = (
+        _build_negotiation_request(request)
+    )
+
+    assert (
+        "Protect delivery first"
+        in negotiation_request.negotiation_context
+    )
+
+    assert (
+        negotiation_request.product_name
+        == "Industrial Servo Motors"
+    )

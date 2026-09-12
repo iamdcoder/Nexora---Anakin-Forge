@@ -7,6 +7,11 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from autonomous.failure import (
+    FailureCode,
+    classify_failure,
+)
+
 from autonomous.act import (
     ActRequest,
     act_on_procurement,
@@ -19,6 +24,7 @@ from autonomous.discover import (
 
 from autonomous.read import (
     ReadRequest,
+    SourceRead,
     read_procurement_input,
 )
 
@@ -79,6 +85,11 @@ class AutonomousProcurementRequest(BaseModel):
         "lyzr",
     ] = "auto"
 
+    demo_fault: Literal[
+        "none",
+        "recovery_once",
+    ] = "none"
+
 
 class ProcurementAttempt(BaseModel):
 
@@ -101,6 +112,23 @@ class ProcurementAttempt(BaseModel):
     recovery_triggered: bool = False
 
     recovery_reason: str | None = None
+
+    failure_code: FailureCode | None = None
+
+
+class FailureProvenance(BaseModel):
+
+    stage: str
+
+    code: FailureCode
+
+    attempt: int | None = None
+
+    supplier: str | None = None
+
+    message: str
+
+    recoverable: bool
 
 
 class AutonomousProcurementResponse(BaseModel):
@@ -127,6 +155,10 @@ class AutonomousProcurementResponse(BaseModel):
         default_factory=list
     )
 
+    failure_provenance: list[FailureProvenance] = Field(
+        default_factory=list
+    )
+
     supplier_ranking: list[dict[str, Any]]
 
     selected_supplier: dict[str, Any] | None
@@ -138,6 +170,12 @@ class AutonomousProcurementResponse(BaseModel):
     final_verification: dict[str, Any] | None
 
     failure_reason: str | None = None
+
+    failure_code: FailureCode | None = None
+
+    demo: dict[str, Any] = Field(
+        default_factory=dict
+    )
 
 
 def _buyer_policy(
@@ -164,24 +202,54 @@ def _buyer_policy(
 def _read_supplier(
     supplier: ProcurementSupplier,
     source_by_url: dict[str, Any] | None = None,
+    read_live_source: bool = True,
 ) -> SupplierCandidate:
 
-    source = (source_by_url or {}).get(supplier.source_url)
+    source = (source_by_url or {}).get(
+        supplier.source_url
+    )
 
-    if source is None:
+    if source is None and read_live_source:
         from autonomous.read import _fetch_source
-        source = _fetch_source(supplier.source_url)
+        source = _fetch_source(
+            supplier.source_url
+        )
 
     evidence: list[str] = []
 
+    if source is None:
+        source = SourceRead(
+            url=supplier.source_url,
+            status="read",
+            title=supplier.name,
+            text=supplier.description,
+            provider="simulation",
+            source_mode="SIMULATION",
+            authenticated=False,
+            evidence_snippets=(
+                [supplier.description]
+                if supplier.description
+                else []
+            ),
+        )
+
     if source.status == "read":
         if source.title:
-            evidence.append(f"Website title: {source.title}")
+            evidence.append(
+                f"Website title: {source.title}"
+            )
         if source.text:
-            evidence.append("Website content: " + source.text[:1000])
+            evidence.append(
+                "Website content: "
+                + source.text[:1000]
+            )
     else:
         evidence.append(
-            "Website read failed: " + (source.error or source.status)
+            "Website read failed: "
+            + (
+                source.error
+                or source.status
+            )
         )
 
     return SupplierCandidate(
@@ -221,6 +289,41 @@ def _build_failure_context(
         "Re-evaluate the remaining suppliers. "
         "Do not relax hard procurement constraints "
         "just to obtain a deal."
+    )
+
+
+def _failure_code(
+    *,
+    stage: str,
+    error: Any = None,
+    violations: list[str] | None = None,
+) -> FailureCode:
+    return classify_failure(
+        stage=stage,
+        error=error,
+        violations=violations,
+    )
+
+
+def _record_failure(
+    *,
+    failure_provenance: list[FailureProvenance],
+    stage: str,
+    code: FailureCode,
+    message: str,
+    attempt: int | None = None,
+    supplier: str | None = None,
+    recoverable: bool = False,
+) -> None:
+    failure_provenance.append(
+        FailureProvenance(
+            stage=stage,
+            code=code,
+            attempt=attempt,
+            supplier=supplier,
+            message=message,
+            recoverable=recoverable,
+        )
     )
 
 
@@ -343,12 +446,17 @@ def procure(
 
         stages["read"] = "failed"
 
+        code = _failure_code(
+            stage="READ",
+            error=exc,
+        )
         raise HTTPException(
             status_code=502,
             detail={
                 "message": "READ stage failed.",
                 "workflow_id": workflow_id,
                 "error": str(exc),
+                "failure_code": code,
             },
         ) from exc
 
@@ -366,12 +474,17 @@ def procure(
 
         stages["reason"] = "failed"
 
+        code = _failure_code(
+            stage="REASON",
+            error=exc,
+        )
         raise HTTPException(
             status_code=502,
             detail={
                 "message": "REASON stage failed.",
                 "workflow_id": workflow_id,
                 "error": str(exc),
+                "failure_code": code,
             },
         ) from exc
 
@@ -407,6 +520,10 @@ def procure(
             _read_supplier(
                 supplier,
                 source_by_url=source_by_url,
+                read_live_source=(
+                    request.execution_mode
+                    != "simulation"
+                ),
             )
             for supplier in request.suppliers
         ]
@@ -427,6 +544,10 @@ def procure(
             "supplier_selection"
         ] = "failed"
 
+        code = _failure_code(
+            stage="SUPPLIER_SELECTION",
+            error=exc,
+        )
         raise HTTPException(
             status_code=422,
             detail={
@@ -435,6 +556,7 @@ def procure(
                 ),
                 "workflow_id": workflow_id,
                 "error": str(exc),
+                "failure_code": code,
             },
         ) from exc
 
@@ -492,6 +614,8 @@ def procure(
         dict[str, Any]
     ] = []
 
+    failure_provenance: list[FailureProvenance] = []
+
     attempted_supplier_names: set[str] = set()
 
     max_attempts = min(
@@ -502,6 +626,10 @@ def procure(
     current_ranked = list(
         ranked
     )
+
+    last_failure_code: FailureCode | None = None
+
+    demo_fault_consumed = False
 
     for attempt_number in range(
         1,
@@ -564,6 +692,7 @@ def procure(
                         if attempt_number < max_attempts
                         else None
                     ),
+                    failure_code="SELECTION_ERROR",
                 )
             )
 
@@ -605,6 +734,21 @@ def procure(
 
                     stages["recovery"] = "failed"
 
+                    last_failure_code = _failure_code(
+                        stage="RECOVERY",
+                        error=exc,
+                    )
+
+                    _record_failure(
+                        failure_provenance=failure_provenance,
+                        stage="RECOVERY",
+                        code=last_failure_code,
+                        message=str(exc),
+                        attempt=attempt_number,
+                        supplier=supplier.name,
+                        recoverable=False,
+                    )
+
                     recovery_events.append(
                         {
                             "attempt": attempt_number,
@@ -613,6 +757,123 @@ def procure(
                             ),
                             "supplier": supplier.name,
                             "message": str(exc),
+                            "failure_code": last_failure_code,
+                        }
+                    )
+
+            continue
+
+        if (
+            request.demo_fault == "recovery_once"
+            and not demo_fault_consumed
+        ):
+
+            demo_fault_consumed = True
+            stages["act"] = "failed"
+
+            demo_fault_message = (
+                "Controlled flagship demo fault injection: "
+                "the first supplier attempt is intentionally blocked "
+                "so Nexora must autonomously recover. No fake negotiation "
+                "result is produced; the next attempt runs through the "
+                "normal ACT and VERIFY stages."
+            )
+
+            failure_context = _build_failure_context(
+                attempt=attempt_number,
+                supplier=supplier.name,
+                stage="ACT",
+                message=demo_fault_message,
+            )
+
+            last_failure_code = "DEMO_FAULT"
+
+            _record_failure(
+                failure_provenance=failure_provenance,
+                stage="ACT",
+                code=last_failure_code,
+                message=demo_fault_message,
+                attempt=attempt_number,
+                supplier=supplier.name,
+                recoverable=(
+                    attempt_number < max_attempts
+                ),
+            )
+
+            attempts.append(
+                ProcurementAttempt(
+                    attempt=attempt_number,
+                    supplier=supplier.name,
+                    supplier_score=(
+                        supplier_score.compatibility_score
+                    ),
+                    decision="demo_fault_injected",
+                    negotiation_id=None,
+                    verified=False,
+                    violations=[demo_fault_message],
+                    recovery_triggered=(
+                        attempt_number < max_attempts
+                    ),
+                    recovery_reason=(
+                        "Controlled demo fault triggered; "
+                        "Nexora will re-rank remaining suppliers."
+                        if attempt_number < max_attempts
+                        else None
+                    ),
+                    failure_code=last_failure_code,
+                )
+            )
+
+            if attempt_number < max_attempts:
+
+                try:
+
+                    (
+                        reasoning,
+                        current_ranked,
+                    ) = _recover_and_rerank(
+                        intake=read_result.intake,
+                        buyer=buyer,
+                        current_ranked=current_ranked,
+                        attempted_supplier_names=(
+                            attempted_supplier_names
+                        ),
+                        failure_context=failure_context,
+                        recovery_events=recovery_events,
+                        reasoning_history=reasoning_history,
+                        attempt=attempt_number,
+                        failed_supplier=supplier.name,
+                        stages=stages,
+                    )
+
+                except Exception as exc:
+
+                    stages["recovery"] = "failed"
+
+                    recovery_failure_code = _failure_code(
+                        stage="RECOVERY",
+                        error=exc,
+                    )
+
+                    last_failure_code = recovery_failure_code
+
+                    _record_failure(
+                        failure_provenance=failure_provenance,
+                        stage="RECOVERY",
+                        code=recovery_failure_code,
+                        message=str(exc),
+                        attempt=attempt_number,
+                        supplier=supplier.name,
+                        recoverable=False,
+                    )
+
+                    recovery_events.append(
+                        {
+                            "attempt": attempt_number,
+                            "trigger": "RECOVERY_REASONING_FAILURE",
+                            "supplier": supplier.name,
+                            "message": str(exc),
+                            "failure_code": recovery_failure_code,
                         }
                     )
 
@@ -658,6 +919,23 @@ def procure(
                 )
             )
 
+            failure_code = _failure_code(
+                stage="ACT",
+                error=exc,
+            )
+
+            last_failure_code = failure_code
+
+            _record_failure(
+                failure_provenance=failure_provenance,
+                stage="ACT",
+                code=failure_code,
+                message=str(exc),
+                attempt=attempt_number,
+                supplier=supplier.name,
+                recoverable=(attempt_number < max_attempts),
+            )
+
             attempts.append(
                 ProcurementAttempt(
                     attempt=attempt_number,
@@ -680,6 +958,7 @@ def procure(
                         if attempt_number < max_attempts
                         else None
                     ),
+                    failure_code=failure_code,
                 )
             )
 
@@ -711,6 +990,27 @@ def procure(
 
                     stages["recovery"] = "failed"
 
+                    last_failure_code = _failure_code(
+                        stage="RECOVERY",
+                        error=recovery_exc,
+                    )
+
+                    recovery_failure_code = _failure_code(
+                        stage="RECOVERY",
+                        error=recovery_exc,
+                    )
+                    last_failure_code = recovery_failure_code
+
+                    _record_failure(
+                        failure_provenance=failure_provenance,
+                        stage="RECOVERY",
+                        code=recovery_failure_code,
+                        message=str(recovery_exc),
+                        attempt=attempt_number,
+                        supplier=supplier.name,
+                        recoverable=False,
+                    )
+
                     recovery_events.append(
                         {
                             "attempt": attempt_number,
@@ -721,6 +1021,7 @@ def procure(
                             "message": str(
                                 recovery_exc
                             ),
+                            "failure_code": recovery_failure_code,
                         }
                     )
 
@@ -754,6 +1055,23 @@ def procure(
         except Exception as exc:
 
             stages["verify"] = "failed"
+
+            failure_code = _failure_code(
+                stage="VERIFY",
+                error=exc,
+            )
+
+            last_failure_code = failure_code
+
+            _record_failure(
+                failure_provenance=failure_provenance,
+                stage="VERIFY",
+                code=failure_code,
+                message=str(exc),
+                attempt=attempt_number,
+                supplier=supplier.name,
+                recoverable=(attempt_number < max_attempts),
+            )
 
             failure_context = (
                 _build_failure_context(
@@ -789,6 +1107,7 @@ def procure(
                         if attempt_number < max_attempts
                         else None
                     ),
+                    failure_code=failure_code,
                 )
             )
 
@@ -820,6 +1139,22 @@ def procure(
 
                     stages["recovery"] = "failed"
 
+                    recovery_failure_code = _failure_code(
+                        stage="RECOVERY",
+                        error=recovery_exc,
+                    )
+                    last_failure_code = recovery_failure_code
+
+                    _record_failure(
+                        failure_provenance=failure_provenance,
+                        stage="RECOVERY",
+                        code=recovery_failure_code,
+                        message=str(recovery_exc),
+                        attempt=attempt_number,
+                        supplier=supplier.name,
+                        recoverable=False,
+                    )
+
                     recovery_events.append(
                         {
                             "attempt": attempt_number,
@@ -830,6 +1165,7 @@ def procure(
                             "message": str(
                                 recovery_exc
                             ),
+                            "failure_code": recovery_failure_code,
                         }
                     )
 
@@ -897,6 +1233,9 @@ def procure(
                 recovery_events=(
                     recovery_events
                 ),
+                failure_provenance=(
+                    failure_provenance
+                ),
                 supplier_ranking=[
                     item.model_dump()
                     for item in current_ranked
@@ -909,6 +1248,17 @@ def procure(
                 final_verification=(
                     final_verification
                 ),
+                failure_code=None,
+                demo={
+                    "enabled": request.demo_fault != "none",
+                    "fault": request.demo_fault,
+                    "fault_injected": demo_fault_consumed,
+                    "description": (
+                        "Controlled recovery demonstration"
+                        if request.demo_fault != "none"
+                        else "Standard autonomous procurement run"
+                    ),
+                },
             )
 
         failure_context = _build_failure_context(
@@ -921,6 +1271,26 @@ def procure(
                 "the resulting agreement."
             ),
             violations=verification.violations,
+        )
+
+        failure_code = _failure_code(
+            stage="VERIFY",
+            violations=verification.violations,
+        )
+
+        last_failure_code = failure_code
+
+        _record_failure(
+            failure_provenance=failure_provenance,
+            stage="VERIFY",
+            code=failure_code,
+            message=(
+                "; ".join(verification.violations)
+                or "Independent verification rejected the agreement."
+            ),
+            attempt=attempt_number,
+            supplier=supplier.name,
+            recoverable=(attempt_number < max_attempts),
         )
 
         attempts.append(
@@ -947,6 +1317,7 @@ def procure(
                     if attempt_number < max_attempts
                     else None
                 ),
+                failure_code=failure_code,
             )
         )
 
@@ -1031,6 +1402,9 @@ def procure(
         recovery_events=(
             recovery_events
         ),
+        failure_provenance=(
+            failure_provenance
+        ),
         supplier_ranking=[
             item.model_dump()
             for item in current_ranked
@@ -1048,6 +1422,17 @@ def procure(
             "supplier attempts without producing "
             "a verified agreement."
         ),
+        failure_code=last_failure_code or "UNKNOWN_ERROR",
+        demo={
+            "enabled": request.demo_fault != "none",
+            "fault": request.demo_fault,
+            "fault_injected": demo_fault_consumed,
+            "description": (
+                "Controlled recovery demonstration"
+                if request.demo_fault != "none"
+                else "Standard autonomous procurement run"
+            ),
+        },
     )
 
 

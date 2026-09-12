@@ -11,6 +11,10 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+from autonomous.anakin_evidence import (
+    normalize_anakin_result,
+)
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -36,15 +40,32 @@ class ReadRequest(BaseModel):
 class SourceRead(BaseModel):
     url: str
     status: str
+
     title: str | None = None
     text: str = ""
     error: str | None = None
     content_hash: str | None = None
+
     provider: str = "direct_http"
+
     request_id: str | None = None
     duration_ms: int | None = None
     credits_remaining: int | float | None = None
     authenticated: bool = False
+
+    source_mode: str = "DIRECT"
+
+    claims: dict[str, Any] = Field(
+        default_factory=dict,
+    )
+
+    evidence_snippets: list[str] = Field(
+        default_factory=list,
+    )
+
+    warnings: list[str] = Field(
+        default_factory=list,
+    )
 
 
 class ProcurementRead(BaseModel):
@@ -67,11 +88,11 @@ class ProcurementRead(BaseModel):
     currency: str | None = None
 
     requirements: list[str] = Field(
-        default_factory=list
+        default_factory=list,
     )
 
     source_urls: list[str] = Field(
-        default_factory=list
+        default_factory=list,
     )
 
     raw_text: str
@@ -83,7 +104,6 @@ class ReadResponse(BaseModel):
 
 
 class _HTMLTextParser(HTMLParser):
-
     _IGNORED = {
         "script",
         "style",
@@ -93,15 +113,11 @@ class _HTMLTextParser(HTMLParser):
     }
 
     def __init__(self) -> None:
-
         super().__init__()
 
         self._ignore_depth = 0
-
         self.title = ""
-
         self._in_title = False
-
         self.parts: list[str] = []
 
     def handle_starttag(
@@ -109,62 +125,47 @@ class _HTMLTextParser(HTMLParser):
         tag: str,
         attrs: list[tuple[str, str | None]],
     ) -> None:
-
         tag = tag.lower()
 
         if tag == "title":
-
             self._in_title = True
-
             return
 
         if tag in self._IGNORED:
-
             self._ignore_depth += 1
 
     def handle_endtag(
         self,
         tag: str,
     ) -> None:
-
         tag = tag.lower()
 
         if tag == "title":
-
             self._in_title = False
-
             return
 
         if (
             tag in self._IGNORED
             and self._ignore_depth
         ):
-
             self._ignore_depth -= 1
 
     def handle_data(
         self,
         data: str,
     ) -> None:
-
-        value = " ".join(
-            data.split()
-        )
+        value = " ".join(data.split())
 
         if not value:
-
             return
 
         if self._in_title:
-
             self.title = (
                 f"{self.title} {value}"
             ).strip()
-
             return
 
         if self._ignore_depth:
-
             return
 
         self.parts.append(value)
@@ -173,7 +174,6 @@ class _HTMLTextParser(HTMLParser):
 def _clean_text(
     value: str,
 ) -> str:
-
     value = re.sub(
         r"\s+",
         " ",
@@ -188,9 +188,7 @@ def _extract_number(
     text: str,
     cast: Any = int,
 ) -> Any:
-
     for pattern in patterns:
-
         match = re.search(
             pattern,
             text,
@@ -198,18 +196,14 @@ def _extract_number(
         )
 
         if match:
-
             try:
-
                 return cast(
-                    match.group(1)
+                    match.group(1),
                 )
-
             except (
                 TypeError,
                 ValueError,
             ):
-
                 continue
 
     return None
@@ -218,20 +212,20 @@ def _extract_number(
 def _extract_product(
     text: str,
 ) -> str | None:
-
     patterns = [
-
-        r"(?:product|item|material|service)"
-        r"\s*(?:name)?\s*[:\-]\s*"
-        r"([^\n.;]{2,120})",
-
-        r"(?:we need|looking for|require|"
-        r"requirement is)\s+"
-        r"([^\n.;]{2,120})",
+        (
+            r"(?:product|item|material|service)"
+            r"\s*(?:name)?\s*[:\-]\s*"
+            r"([^\n.;]{2,120})"
+        ),
+        (
+            r"(?:we need|looking for|require|"
+            r"requirement is)\s+"
+            r"([^\n.;]{2,120})"
+        ),
     ]
 
     for pattern in patterns:
-
         match = re.search(
             pattern,
             text,
@@ -239,13 +233,11 @@ def _extract_product(
         )
 
         if match:
-
             value = _clean_text(
-                match.group(1)
+                match.group(1),
             )
 
             if value:
-
                 return value
 
     return None
@@ -254,7 +246,6 @@ def _extract_product(
 def _extract_currency(
     text: str,
 ) -> str | None:
-
     if (
         "₹" in text
         or re.search(
@@ -263,7 +254,6 @@ def _extract_currency(
             re.I,
         )
     ):
-
         return "INR"
 
     if (
@@ -274,7 +264,6 @@ def _extract_currency(
             re.I,
         )
     ):
-
         return "USD"
 
     if (
@@ -285,7 +274,6 @@ def _extract_currency(
             re.I,
         )
     ):
-
         return "EUR"
 
     if (
@@ -296,7 +284,6 @@ def _extract_currency(
             re.I,
         )
     ):
-
         return "GBP"
 
     return None
@@ -305,22 +292,19 @@ def _extract_currency(
 def _extract_requirements(
     text: str,
 ) -> list[str]:
-
     requirements: list[str] = []
 
     for line in re.split(
         r"[\n•\r]+",
         text,
     ):
-
         line = _clean_text(
-            line
+            line,
         ).strip("-*")
 
         lower = line.lower()
 
         if not line:
-
             continue
 
         if any(
@@ -334,13 +318,11 @@ def _extract_requirements(
                 "compliance",
             )
         ):
-
             requirements.append(
-                line[:300]
+                line[:300],
             )
 
         if len(requirements) >= 20:
-
             break
 
     return requirements
@@ -349,39 +331,31 @@ def _extract_requirements(
 def _host_is_blocked(
     host: str,
 ) -> bool:
-
     host = (
-        host
-        or ""
+        host or ""
     ).strip().lower().rstrip(".")
 
     if host in {
         "localhost",
         "localhost.localdomain",
     }:
-
         return True
 
     try:
-
         address = ipaddress.ip_address(
-            host
+            host,
         )
 
     except ValueError:
-
         try:
-
             resolved = socket.gethostbyname(
-                host
+                host,
             )
-
             address = ipaddress.ip_address(
-                resolved
+                resolved,
             )
 
         except OSError:
-
             return False
 
     return (
@@ -396,7 +370,6 @@ def _host_is_blocked(
 def _validate_url(
     url: str,
 ) -> str:
-
     parsed = urlparse(url)
 
     if (
@@ -406,17 +379,15 @@ def _validate_url(
         }
         or not parsed.netloc
     ):
-
         raise ValueError(
-            "Only absolute http:// and https:// URLs are allowed."
+            "Only absolute http:// and https:// URLs are allowed.",
         )
 
     if _host_is_blocked(
-        parsed.hostname or ""
+        parsed.hostname or "",
     ):
-
         raise ValueError(
-            "Private or local network URLs are not allowed."
+            "Private or local network URLs are not allowed.",
         )
 
     return url
@@ -425,14 +396,11 @@ def _validate_url(
 def _fetch_direct_source(
     safe_url: str,
 ) -> SourceRead:
-
     try:
-
         request = Request(
             safe_url,
             headers={
-                "User-Agent":
-                    "Nexora-Forge/1.0"
+                "User-Agent": "Nexora-Forge/1.0",
             },
             method="GET",
         )
@@ -441,9 +409,8 @@ def _fetch_direct_source(
             request,
             timeout=8,
         ) as response:
-
             raw = response.read(
-                200_000
+                200_000,
             )
 
             content_type = response.headers.get(
@@ -462,17 +429,30 @@ def _fetch_direct_source(
             or "<html"
             in decoded[:2000].lower()
         ):
-
             parser = _HTMLTextParser()
             parser.feed(decoded)
-            text = _clean_text(" ".join(parser.parts))
-            title = _clean_text(parser.title) or None
+
+            text = _clean_text(
+                " ".join(
+                    parser.parts,
+                )
+            )
+
+            title = (
+                _clean_text(
+                    parser.title,
+                )
+                or None
+            )
+
         else:
-            text = _clean_text(decoded)
+            text = _clean_text(
+                decoded,
+            )
             title = None
 
         digest = hashlib.sha256(
-            text.encode("utf-8")
+            text.encode("utf-8"),
         ).hexdigest()
 
         return SourceRead(
@@ -482,86 +462,156 @@ def _fetch_direct_source(
             text=text[:25_000],
             content_hash=digest,
             provider="direct_http",
+            source_mode="DIRECT",
         )
 
     except Exception as exc:
-
         return SourceRead(
             url=safe_url,
             status="error",
             error=str(exc)[:300],
             provider="direct_http",
+            source_mode="DIRECT",
         )
 
 
 def _fetch_source(
     url: str,
 ) -> SourceRead:
-
     try:
-        safe_url = _validate_url(url)
+        safe_url = _validate_url(
+            url,
+        )
+
     except ValueError as exc:
         return SourceRead(
             url=url,
             status="rejected",
             error=str(exc),
             provider="validation",
+            source_mode="REJECTED",
         )
 
     use_anakin = (
-        os.getenv("ANAKIN_ENABLED", "1").strip() == "1"
+        os.getenv(
+            "ANAKIN_ENABLED",
+            "1",
+        ).strip()
+        == "1"
     )
+
     if use_anakin:
         try:
-            from autonomous.anakin_client import scrape_url
+            from autonomous.anakin_client import (
+                scrape_url,
+            )
 
             result = scrape_url(
                 safe_url,
                 use_browser=(
-                    os.getenv("ANAKIN_USE_BROWSER", "0").strip() == "1"
+                    os.getenv(
+                        "ANAKIN_USE_BROWSER",
+                        "0",
+                    ).strip()
+                    == "1"
                 ),
             )
-            text = _clean_text(result.get("text") or "")
-            digest = hashlib.sha256(
-                text.encode("utf-8")
-            ).hexdigest()
+
+            normalized = normalize_anakin_result(
+                {
+                    **result,
+                    "url": safe_url,
+                }
+            )
+
+            text = _clean_text(
+                normalized.text,
+            )
+
             return SourceRead(
                 url=safe_url,
-                status="read" if text else "error",
-                title=result.get("title"),
+                status=(
+                    "read"
+                    if text
+                    else "error"
+                ),
+                title=normalized.title,
                 text=text[:25_000],
-                error=None if text else "Anakin returned no readable content.",
-                content_hash=digest if text else None,
-                provider="anakin",
-                request_id=result.get("request_id"),
-                duration_ms=result.get("duration_ms"),
-                credits_remaining=result.get("credits_remaining"),
-                authenticated=bool(result.get("authenticated")),
-            )
-        except Exception as exc:
-            if os.getenv("ANAKIN_FALLBACK_DIRECT", "1").strip() == "1":
-                fallback = _fetch_direct_source(safe_url)
-                if fallback.status == "read":
-                    fallback.error = (
-                        "Anakin unavailable; direct HTTP fallback used. "
-                        + str(exc)[:200]
+                error=(
+                    None
+                    if text
+                    else (
+                        "Anakin returned no readable content."
                     )
+                ),
+                content_hash=(
+                    normalized.content_hash
+                ),
+                provider="anakin",
+                request_id=(
+                    normalized.request_id
+                ),
+                duration_ms=(
+                    normalized.duration_ms
+                ),
+                credits_remaining=(
+                    normalized.credits_remaining
+                ),
+                authenticated=(
+                    normalized.authenticated
+                ),
+                source_mode="LIVE",
+                claims=normalized.claims,
+                evidence_snippets=(
+                    normalized.evidence_snippets
+                ),
+                warnings=normalized.warnings,
+            )
+
+        except Exception as exc:
+            if (
+                os.getenv(
+                    "ANAKIN_FALLBACK_DIRECT",
+                    "1",
+                ).strip()
+                == "1"
+            ):
+                fallback = _fetch_direct_source(
+                    safe_url,
+                )
+
+                if fallback.status == "read":
+                    fallback.warnings = [
+                        *fallback.warnings,
+                        (
+                            "Anakin unavailable; "
+                            "direct HTTP fallback used: "
+                            f"{str(exc)[:200]}"
+                        ),
+                    ]
+
                     return fallback
+
             return SourceRead(
                 url=safe_url,
                 status="error",
                 error=str(exc)[:300],
                 provider="anakin",
+                source_mode="ERROR",
+                warnings=[
+                    "Anakin web read failed.",
+                ],
             )
 
-    return _fetch_direct_source(safe_url)
+    return _fetch_direct_source(
+        safe_url,
+    )
 
 
 def _build_intake(
     text: str,
     sources: list[SourceRead],
 ) -> ProcurementRead:
-
     source_texts = [
         item.text
         for item in sources
@@ -587,96 +637,94 @@ def _build_intake(
     )
 
     return ProcurementRead(
-
         intake_id=(
             f"INT-{uuid4().hex[:10].upper()}"
         ),
-
         source_type=source_type,
-
         product_name=_extract_product(
-            combined
+            combined,
         ),
-
         quantity=_extract_number(
             [
-                r"(?:quantity|qty|units?)"
-                r"\s*[:\-]?\s*"
-                r"([0-9][0-9,]*)",
-
-                r"([0-9][0-9,]*)\s+"
-                r"(?:units?|pieces?|pcs)",
+                (
+                    r"(?:quantity|qty|units?)"
+                    r"\s*[:\-]?\s*"
+                    r"([0-9][0-9,]*)"
+                ),
+                (
+                    r"([0-9][0-9,]*)\s+"
+                    r"(?:units?|pieces?|pcs)"
+                ),
             ],
             combined,
             lambda value: int(
-                value.replace(",", "")
+                value.replace(",", ""),
             ),
         ),
-
         delivery_days=_extract_number(
             [
-                r"(?:delivery|lead\s*time|"
-                r"ship(?:ping)?\s+time)"
-                r"\s*(?:target|within|by|of)?"
-                r"\s*[:\-]?\s*"
-                r"([0-9]+)"
-                r"\s*(?:days?|business\s+days?)",
+                (
+                    r"(?:delivery|lead\s*time|"
+                    r"ship(?:ping)?\s+time)"
+                    r"\s*(?:target|within|by|of)?"
+                    r"\s*[:\-]?\s*"
+                    r"([0-9]+)"
+                    r"\s*(?:days?|business\s+days?)"
+                ),
             ],
             combined,
         ),
-
         payment_days=_extract_number(
             [
-                r"(?:payment|terms?)"
-                r"\s*(?:terms)?"
-                r"\s*[:\-]?\s*"
-                r"(?:net\s*)?([0-9]+)",
-
-                r"net\s*([0-9]+)",
+                (
+                    r"(?:payment|terms?)"
+                    r"\s*(?:terms)?"
+                    r"\s*[:\-]?\s*"
+                    r"(?:net\s*)?([0-9]+)"
+                ),
+                (
+                    r"net\s*([0-9]+)"
+                ),
             ],
             combined,
         ),
-
         sla_uptime=_extract_number(
             [
-                r"(?:uptime|availability)"
-                r"\s*(?:SLA)?"
-                r"\s*[:\-]?\s*"
-                r"([0-9]+(?:\.[0-9]+)?)"
-                r"\s*%",
+                (
+                    r"(?:uptime|availability)"
+                    r"\s*(?:SLA)?"
+                    r"\s*[:\-]?\s*"
+                    r"([0-9]+(?:\.[0-9]+)?)"
+                    r"\s*%"
+                ),
             ],
             combined,
             float,
         ),
-
         sla_penalty=_extract_number(
             [
-                r"(?:SLA\s+)?penalty"
-                r"\s*[:\-]?\s*"
-                r"([0-9]+(?:\.[0-9]+)?)"
-                r"\s*%",
+                (
+                    r"(?:SLA\s+)?penalty"
+                    r"\s*[:\-]?\s*"
+                    r"([0-9]+(?:\.[0-9]+)?)"
+                    r"\s*%"
+                ),
             ],
             combined,
             float,
         ),
-
         currency=_extract_currency(
-            combined
+            combined,
         ),
-
         requirements=_extract_requirements(
-            combined
+            combined,
         ),
-
         source_urls=[
             item.url
             for item in sources
             if item.status == "read"
         ],
-
-        raw_text=combined[
-            :100_000
-        ],
+        raw_text=combined[:100_000],
     )
 
 
@@ -687,12 +735,10 @@ def _build_intake(
 def read_procurement_input(
     request: ReadRequest,
 ) -> ReadResponse:
-
     if (
         not request.text.strip()
         and not request.sources
     ):
-
         raise HTTPException(
             status_code=400,
             detail=(
@@ -723,7 +769,6 @@ def read_procurement_input(
         )
         and not request.text.strip()
     ):
-
         raise HTTPException(
             status_code=422,
             detail=(

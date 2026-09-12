@@ -150,6 +150,24 @@ def _validate_action_request(
             },
         )
 
+    if not isinstance(request.buyer, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="Buyer policy must be a JSON object.",
+        )
+
+    if not isinstance(request.supplier, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="Supplier policy must be a JSON object.",
+        )
+
+    if request.reasoning.reasoning_id == "":
+        raise HTTPException(
+            status_code=422,
+            detail="Reasoning ID is required for autonomous execution.",
+        )
+
     missing = _has_critical_missing_information(
         request.reasoning
     )
@@ -191,10 +209,70 @@ def _build_negotiation_request(
         quantity=_resolve_quantity(
             request
         ),
+        negotiation_context=(
+            _build_strategy_context(
+                request.reasoning
+            )
+        ),
         execution_mode=(
             request.execution_mode
         ),
     )
+
+
+def _build_strategy_context(
+    reasoning: ProcurementReasoning,
+) -> str:
+    """Convert procurement reasoning into non-sensitive negotiation guidance."""
+
+    lines = [
+        f"Reasoning ID: {reasoning.reasoning_id}",
+    ]
+
+    if reasoning.recommended_strategy:
+        lines.append(
+            f"Recommended strategy: {reasoning.recommended_strategy}"
+        )
+
+    if reasoning.priorities:
+        lines.append(
+            "Priority order: "
+            + "; ".join(reasoning.priorities[:8])
+        )
+
+    if reasoning.supplier_evaluation_factors:
+        lines.append(
+            "Supplier evaluation factors: "
+            + "; ".join(
+                reasoning.supplier_evaluation_factors[:8]
+            )
+        )
+
+    if reasoning.hard_constraints:
+        lines.append(
+            "Hard constraints to preserve: "
+            + "; ".join(
+                f"{item.field}={item.value}"
+                for item in reasoning.hard_constraints[:8]
+            )
+        )
+
+    if reasoning.soft_preferences:
+        lines.append(
+            "Soft preferences: "
+            + "; ".join(
+                f"{item.field}={item.value}"
+                for item in reasoning.soft_preferences[:8]
+            )
+        )
+
+    if reasoning.risks:
+        lines.append(
+            "Known procurement risks: "
+            + "; ".join(reasoning.risks[:8])
+        )
+
+    return "\n".join(lines)
 
 
 def _execute_existing_negotiation(
@@ -214,10 +292,21 @@ def _execute_existing_negotiation(
     )
 
     if not isinstance(result, dict):
-
         raise RuntimeError(
-            "Existing negotiation API returned "
-            "an unexpected response."
+            "Existing negotiation API returned an unexpected response."
+        )
+
+    negotiation_id = result.get("negotiation_id")
+    status = result.get("status")
+
+    if not negotiation_id:
+        raise RuntimeError(
+            "Negotiation execution returned no negotiation_id."
+        )
+
+    if status is None:
+        raise RuntimeError(
+            "Negotiation execution returned no status."
         )
 
     return result

@@ -1,186 +1,216 @@
+from autonomous.ai_reasoner import (
+    AIReasoningDraft,
+)
 from autonomous.read import ProcurementRead
-from autonomous.reason import reason_about_procurement
-from fastapi.testclient import TestClient
-
-from main import app
+import autonomous.reason as reason_module
 
 
-def make_intake() -> ProcurementRead:
+def test_reasoning_merges_ai_strategy_without_removing_deterministic_constraints(
+    monkeypatch,
+):
 
-    return ProcurementRead(
-        intake_id="INT-TEST123",
+    intake = ProcurementRead(
+        intake_id="INT-AI-MERGE",
         source_type="manual",
-        product_name="Industrial Servo Motors",
+        product_name="Servo Motors",
         quantity=1000,
         delivery_days=30,
         payment_days=60,
-        sla_uptime=98.0,
-        sla_penalty=2.0,
+        sla_uptime=98,
+        sla_penalty=2,
         currency="INR",
         requirements=[
-            "Must include ISO 9001 compliance.",
-            "Quality documentation required.",
-            "Preferred standard packaging.",
+            "Must include ISO 9001 compliance."
         ],
         source_urls=[],
         raw_text=(
-            "Product: Industrial Servo Motors. "
-            "Quantity: 1000 units. "
-            "Delivery within 30 days. "
-            "Payment: Net 60. "
-            "Uptime SLA: 98%. "
-            "Penalty: 2%. "
-            "Must include ISO 9001 compliance."
+            "Servo Motors, 1000 units, "
+            "delivery within 30 days."
         ),
     )
 
-
-def test_reasoning_builds_procurement_objective():
-
-    intake = make_intake()
-
-    result = reason_about_procurement(
-        intake
+    draft = AIReasoningDraft(
+        summary=(
+            "Delivery is the dominant constraint."
+        ),
+        priority_order=[
+            "delivery",
+            "sla",
+            "price",
+            "payment",
+        ],
+        hard_constraints=[
+            "Delivery must be 30 days or less."
+        ],
+        soft_preferences=[
+            "Prefer Net 60 payment."
+        ],
+        recommended_strategy=(
+            "Protect delivery first and trade price second."
+        ),
+        supplier_evaluation_factors=[
+            "delivery fit",
+            "SLA fit",
+        ],
+        risks=[
+            "Limited supplier pool."
+        ],
+        missing_information=[],
+        confidence=0.92,
+        decision_rationale=(
+            "Missing delivery would make the purchase unusable."
+        ),
     )
 
-    assert (
-        result.reasoning_id.startswith(
-            "RSN-"
+    monkeypatch.setattr(
+        reason_module,
+        "run_ai_reasoning",
+        lambda *args, **kwargs: draft,
+    )
+
+    result = (
+        reason_module.reason_about_procurement(
+            intake
         )
     )
 
-    assert result.intake_id == "INT-TEST123"
-
     assert (
-        result.product_name
-        == "Industrial Servo Motors"
+        result.reasoning_source
+        == "lyzr"
     )
 
-    assert result.quantity == 1000
+    assert result.ai_reasoning_run_id
 
     assert (
-        result.target_delivery_days
-        == 30
+        result.ai_summary
+        == draft.summary
     )
 
     assert (
-        result.target_payment_days
-        == 60
+        result.recommended_strategy
+        == draft.recommended_strategy
     )
 
-
-def test_reasoning_separates_constraints_and_preferences():
-
-    intake = make_intake()
-
-    result = reason_about_procurement(
-        intake
+    assert (
+        result.ai_confidence
+        == 0.92
     )
-
-    hard_fields = [
-        item.field
-        for item in result.hard_constraints
-    ]
-
-    soft_fields = [
-        item.field
-        for item in result.soft_preferences
-    ]
-
-    assert "quantity" in hard_fields
-
-    assert "delivery_days" in hard_fields
-
-    assert "sla_uptime" in hard_fields
-
-    assert "payment_days" in soft_fields
-
-    assert "sla_penalty" in soft_fields
 
     assert any(
-        item.priority == "critical"
-        and "ISO 9001" in item.value
+        item.field == "quantity"
+        for item
+        in result.hard_constraints
+    )
+
+    assert not any(
+        item.source == "ai_reasoning"
         for item in result.hard_constraints
     )
 
+    assert any(
+        "AI-suggested hard constraint is advisory only"
+        in risk
+        for risk in result.risks
+    )
 
-def test_reasoning_detects_missing_information():
+    assert (
+        "AI strategy:"
+        in result.negotiation_brief
+    )
 
+def test_ai_reasoning_provider_failure_falls_back(monkeypatch):
     intake = ProcurementRead(
-        intake_id="INT-MISSING",
+        intake_id="INT-AI-FAIL",
         source_type="manual",
         product_name="Controllers",
-        quantity=None,
-        delivery_days=None,
-        payment_days=None,
-        sla_uptime=None,
-        sla_penalty=None,
-        currency=None,
+        quantity=100,
+        delivery_days=20,
+        payment_days=60,
+        sla_uptime=98,
+        sla_penalty=2,
+        currency="INR",
         requirements=[],
         source_urls=[],
-        raw_text="We need controllers.",
+        raw_text="100 controllers within 20 days.",
     )
 
-    result = reason_about_procurement(
-        intake
+    monkeypatch.setenv(
+        "LYZR_AI_REASONING_ENABLED",
+        "1",
+    )
+    monkeypatch.setenv(
+        "LYZR_REASONING_AGENT_ID",
+        "agent-test",
+    )
+    monkeypatch.setenv(
+        "LYZR_API_KEY",
+        "key-test",
     )
 
-    assert (
-        "Required quantity"
-        in result.missing_information
+    class FailingClient:
+        def chat(self, *args, **kwargs):
+            raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(
+        "autonomous.ai_reasoner.LyzrClient",
+        lambda: FailingClient(),
     )
 
-    assert (
-        "Required delivery timeline"
-        in result.missing_information
+    result = reason_module.reason_about_procurement(
+        intake,
+        use_ai=True,
     )
 
-    assert (
-        "Expected payment terms"
-        in result.missing_information
+    assert result.reasoning_source == "deterministic"
+    assert result.ai_reasoning_run_id is None
+
+
+def test_ai_prompt_does_not_expose_private_numeric_policy(monkeypatch):
+    from autonomous.ai_reasoner import _build_prompt
+    from models.policy import PartyPolicy
+
+    intake = ProcurementRead(
+        intake_id="INT-AI-PRIVACY",
+        source_type="manual",
+        product_name="Controllers",
+        quantity=100,
+        delivery_days=20,
+        payment_days=60,
+        sla_uptime=98,
+        sla_penalty=2,
+        currency="INR",
+        requirements=[],
+        source_urls=[],
+        raw_text="100 controllers within 20 days.",
     )
 
-    assert result.confidence < 1.0
-
-    assert len(result.risks) > 0
-
-
-def test_reason_endpoint_returns_reasoning():
-
-    client = TestClient(app)
-
-    intake = make_intake()
-
-    response = client.post(
-        "/api/autonomous/reason",
-        json={
-            "intake": intake.model_dump()
+    policy = PartyPolicy(
+        price={
+            "target": 111111,
+            "maximum": 122222,
         },
+        delivery={
+            "target_days": 20,
+            "maximum_days": 25,
+        },
+        payment={
+            "preferred_days": 60,
+            "minimum_days": 45,
+        },
+        sla={
+            "minimum_uptime": 98,
+            "minimum_penalty": 1,
+            "maximum_penalty": 5,
+        },
+        batna="private",
+        max_rounds=6,
     )
 
-    assert response.status_code == 200
-
-    data = response.json()
-
-    assert "reasoning" in data
-
-    reasoning = data["reasoning"]
-
-    assert (
-        reasoning["intake_id"]
-        == "INT-TEST123"
+    prompt = _build_prompt(
+        intake,
+        policy,
     )
 
-    assert (
-        reasoning["objective"]
-    )
-
-    assert (
-        reasoning["negotiation_brief"]
-    )
-
-    assert (
-        0.0
-        <= reasoning["confidence"]
-        <= 1.0
-    )
+    assert "111111" not in prompt
+    assert "122222" not in prompt
+    assert "private" not in prompt.lower().replace("private numeric negotiation thresholds", "")

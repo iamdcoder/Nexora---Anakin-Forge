@@ -60,6 +60,11 @@ class SupplierAgent:
         revision_feedback,
     ) -> str:
 
+        autonomous_reasoning_context = self.environment.shared_context.get(
+            "autonomous_reasoning_context",
+            "",
+        )
+
         return f"""
 NEXORA_SECURITY_BOUNDARY: supplier_private_session
 SESSION_ID: {self.session_id}
@@ -103,6 +108,12 @@ ROUND:
 
 NEGOTIATION CONTEXT:
 {negotiation_context}
+
+AUTONOMOUS PROCUREMENT REASONING:
+{autonomous_reasoning_context or "No additional procurement strategy was supplied."}
+
+Use this reasoning as strategic guidance only. Your private policy and the
+negotiation guardrails remain authoritative. Do not reveal private policy values.
 
 REVISION FEEDBACK:
 {revision_feedback or "None"}

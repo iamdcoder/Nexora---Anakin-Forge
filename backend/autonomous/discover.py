@@ -52,6 +52,12 @@ class SupplierScore(BaseModel):
 
     evidence_score: float
 
+    scoring_weights: dict[str, float] = Field(
+        default_factory=dict
+    )
+
+    selection_rationale: str = ""
+
     risk_flags: list[str] = Field(
         default_factory=list
     )
@@ -130,6 +136,128 @@ def _score_range(
         ),
         4,
     )
+
+
+def _priority_position(
+    priorities: list[str],
+    aliases: tuple[str, ...],
+) -> int | None:
+
+    for index, priority in enumerate(priorities):
+
+        text = priority.casefold()
+
+        if any(
+            alias in text
+            for alias in aliases
+        ):
+            return index
+
+    return None
+
+
+def _build_scoring_weights(
+    reasoning: ProcurementReasoning,
+) -> dict[str, float]:
+    """Translate reasoning priorities into bounded scoring weights.
+
+    The reasoning agent can influence trade-off emphasis, but it cannot
+    introduce arbitrary scoring dimensions or bypass deterministic policy
+    checks. Only known procurement dimensions are recognized here.
+    """
+
+    base_weights = {
+        "price": 0.30,
+        "delivery": 0.25,
+        "payment": 0.15,
+        "sla": 0.20,
+        "evidence": 0.10,
+    }
+
+    aliases = {
+        "price": (
+            "price",
+            "cost",
+            "budget",
+            "commercial",
+        ),
+        "delivery": (
+            "delivery",
+            "timeline",
+            "lead time",
+            "urgency",
+        ),
+        "payment": (
+            "payment",
+            "terms",
+            "credit",
+        ),
+        "sla": (
+            "sla",
+            "uptime",
+            "availability",
+            "service level",
+        ),
+        "evidence": (
+            "evidence",
+            "quality",
+            "compliance",
+            "certification",
+            "documentation",
+            "provenance",
+            "risk",
+        ),
+    }
+
+    multipliers = (
+        1.60,
+        1.10,
+        0.95,
+        0.85,
+    )
+
+    adjusted: dict[str, float] = {}
+
+    for dimension, base in base_weights.items():
+
+        position = _priority_position(
+            reasoning.priorities,
+            aliases[dimension],
+        )
+
+        if position is None:
+
+            multiplier = 0.80
+
+        elif position < len(multipliers):
+
+            multiplier = multipliers[
+                position
+            ]
+
+        else:
+
+            multiplier = 0.80
+
+        adjusted[dimension] = (
+            base * multiplier
+        )
+
+    total = sum(
+        adjusted.values()
+    )
+
+    if total <= 0:
+
+        return base_weights
+
+    return {
+        key: round(
+            value / total,
+            4,
+        )
+        for key, value in adjusted.items()
+    }
 
 
 def _score_supplier(
@@ -228,20 +356,94 @@ def _score_supplier(
             "No supplier evidence was supplied."
         )
 
-    compatibility_score = round(
-        (
-            price_score * 0.30
-            + delivery_score * 0.25
-            + payment_score * 0.15
-            + sla_score * 0.20
-            + evidence_score * 0.10
-        ),
-        4,
+    scoring_weights = _build_scoring_weights(
+        reasoning
     )
 
-    
-    
-    if evidence_assessment is not None:
+    # ------------------------------------------------------------
+    # HARD POLICY FIREWALL
+    # ------------------------------------------------------------
+    #
+    # Evidence and reasoning priorities are allowed to influence
+    # trade-offs only after deterministic policy feasibility has
+    # been established.
+    #
+    # A supplier failing ANY hard procurement dimension is
+    # immediately considered ineligible.
+    #
+    # This prevents a supplier with perfect Anakin evidence or a
+    # highly favorable AI-generated ranking from reaching ACT while
+    # violating budget, delivery, payment, or SLA requirements.
+    # ------------------------------------------------------------
+
+    hard_policy_failures: list[str] = []
+
+    if price_score <= 0:
+
+        hard_policy_failures.append(
+            "price"
+        )
+
+    if delivery_score <= 0:
+
+        hard_policy_failures.append(
+            "delivery"
+        )
+
+    if payment_score <= 0:
+
+        hard_policy_failures.append(
+            "payment"
+        )
+
+    if sla_score <= 0:
+
+        hard_policy_failures.append(
+            "sla"
+        )
+
+    if hard_policy_failures:
+
+        compatibility_score = 0.0
+
+        for dimension in hard_policy_failures:
+
+            flag = (
+                f"Hard procurement constraint failed: "
+                f"{dimension}."
+            )
+
+            if flag not in risk_flags:
+
+                risk_flags.append(
+                    flag
+                )
+
+    else:
+
+        compatibility_score = round(
+            (
+                price_score
+                * scoring_weights["price"]
+                + delivery_score
+                * scoring_weights["delivery"]
+                + payment_score
+                * scoring_weights["payment"]
+                + sla_score
+                * scoring_weights["sla"]
+                + evidence_score
+                * scoring_weights["evidence"]
+            ),
+            4,
+        )
+
+    # Evidence conflicts reduce an otherwise feasible supplier,
+    # but evidence can never restore eligibility after a hard
+    # policy failure.
+    if (
+        evidence_assessment is not None
+        and not hard_policy_failures
+    ):
 
         conflicts = sum(
             claim.status == "conflict"
@@ -267,7 +469,13 @@ def _score_supplier(
         )
     )
 
-    if compatibility_score >= 0.80:
+    if hard_policy_failures:
+
+        recommendation = (
+            "ineligible"
+        )
+
+    elif compatibility_score >= 0.80:
 
         recommendation = (
             "strong_candidate"
@@ -283,9 +491,40 @@ def _score_supplier(
             "weak_candidate"
         )
 
+    priority_summary = (
+        ", ".join(
+            reasoning.priorities[:3]
+        )
+        if reasoning.priorities
+        else "default procurement priorities"
+    )
+
+    if hard_policy_failures:
+
+        selection_rationale = (
+            "Supplier rejected by deterministic hard-policy validation. "
+            "Failed dimensions: "
+            + ", ".join(
+                hard_policy_failures
+            )
+            + ". "
+            "Anakin evidence and AI reasoning cannot override hard procurement constraints."
+        )
+
+    else:
+
+        selection_rationale = (
+            f"Ranked using deterministic supplier compatibility with emphasis on: "
+            f"{priority_summary}. "
+            f"The resulting score is {compatibility_score:.4f}; "
+            f"model recommendations cannot override policy validation."
+        )
+
     return SupplierScore(
         supplier=candidate,
-        compatibility_score=compatibility_score,
+        compatibility_score=(
+            compatibility_score
+        ),
         price_score=price_score,
         delivery_score=delivery_score,
         payment_score=payment_score,
@@ -293,6 +532,10 @@ def _score_supplier(
         evidence_score=round(
             evidence_score,
             4,
+        ),
+        scoring_weights=scoring_weights,
+        selection_rationale=(
+            selection_rationale
         ),
         risk_flags=risk_flags,
         recommendation=recommendation,
