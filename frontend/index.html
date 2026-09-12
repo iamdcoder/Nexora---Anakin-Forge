@@ -1,0 +1,3908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Nexora — Autonomous B2B Negotiation</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/prop-types@15/prop-types.js"></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  body{background:#07070b;color:#e8e8f0;font-family:Inter,ui-sans-serif,system-ui,sans-serif}
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-track{background:#0d0d14}
+  ::-webkit-scrollbar-thumb{background:#343440;border-radius:999px}
+  .glass{background:rgba(255,255,255,.035);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.08)}
+  .soft{background:rgba(255,255,255,.025)}
+  .badge-offer{background:#1d4ed8;color:#bfdbfe}
+  .badge-counter{background:#6b21a8;color:#e9d5ff}
+  .badge-accept{background:#065f46;color:#a7f3d0}
+  .badge-walk_away{background:#7f1d1d;color:#fca5a5}
+  .badge-allowed{background:#065f46;color:#a7f3d0}
+  .badge-blocked{background:#7f1d1d;color:#fca5a5}
+  .pulse{animation:pulse 1.6s infinite}
+  @keyframes pulse{
+    0%,100%{opacity:1}
+    50%{opacity:.45}
+  }
+  input,select{
+    background:#0d1018;
+    border:1px solid #303747;
+    color:#e8e8f0;
+    border-radius:7px;
+    padding:7px 10px;
+    width:100%;
+    outline:none
+  }
+  input:focus,select:focus{border-color:#6366f1}
+  label{
+    font-size:.7rem;
+    color:#9ca3af;
+    display:block;
+    margin-bottom:4px;
+    text-transform:uppercase;
+    letter-spacing:.06em
+  }
+  .btn{
+    border-radius:8px;
+    padding:9px 16px;
+    font-weight:700;
+    cursor:pointer;
+    transition:all .18s
+  }
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn-primary{background:#4f46e5;color:white}
+  .btn-primary:hover{background:#4338ca}
+  .btn-secondary{
+    background:#151922;
+    color:#e8e8f0;
+    border:1px solid #303747
+  }
+  .btn-secondary:hover{background:#202633}
+  .kpi{
+    background:linear-gradient(
+      180deg,
+      rgba(255,255,255,.05),
+      rgba(255,255,255,.025)
+    );
+    border:1px solid rgba(255,255,255,.08)
+  }
+  .simple-card{
+    background:linear-gradient(
+      180deg,
+      rgba(255,255,255,.045),
+      rgba(255,255,255,.02)
+    );
+    border:1px solid rgba(255,255,255,.08)
+  }
+  .step-dot{
+    width:28px;
+    height:28px;
+    display:grid;
+    place-items:center;
+    border-radius:999px;
+    background:#1d2330;
+    color:#c7d2fe;
+    font-size:12px;
+    font-weight:800;
+    flex:none
+  }
+  .friendly-input{
+    font-size:.95rem !important;
+    padding:11px 12px !important;
+    border-radius:10px !important
+  }
+  .stage-running{
+    box-shadow:
+      0 0 0 1px rgba(99,102,241,.2),
+      0 0 30px rgba(99,102,241,.08)
+  }
+  details>summary{
+    list-style:none;
+    cursor:pointer
+  }
+  details>summary::-webkit-details-marker{display:none}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const {useState,useEffect} = React;
+const {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  BarChart,
+  Bar
+} = Recharts;
+
+const API=
+  (window.NEXORA_API &&
+    window.NEXORA_API.replace(/\/$/,""))
+  ||
+  (
+    window.location.protocol==="http:"
+    ||
+    window.location.protocol==="https:"
+  )
+  ?window.location.origin
+  :"http://localhost:8000";
+
+const DEMO_SUPPLIERS=[
+  {
+    name:"Mouser Electronics India",
+    source_url:"https://www.mouser.in/",
+    policy:{
+      price:{
+        target:118000,
+        minimum:108000,
+        maximum:125000
+      },
+      delivery:{
+        target_days:32,
+        minimum_days:20,
+        maximum_days:42
+      },
+      payment:{
+        preferred_days:45,
+        minimum_days:30,
+        maximum_days:90
+      },
+      sla:{
+        minimum_uptime:98,
+        maximum_uptime:99.9,
+        minimum_penalty:1,
+        maximum_penalty:5
+      },
+      batna:"Alternative customer",
+      max_rounds:8
+    },
+    description:"Authorized electronics and industrial automation distributor"
+  },
+  {
+    name:"RS Components India",
+    source_url:"https://in.rsdelivers.com/",
+    policy:{
+      price:{
+        target:112000,
+        minimum:102000,
+        maximum:120000
+      },
+      delivery:{
+        target_days:30,
+        minimum_days:20,
+        maximum_days:40
+      },
+      payment:{
+        preferred_days:60,
+        minimum_days:30,
+        maximum_days:90
+      },
+      sla:{
+        minimum_uptime:98,
+        maximum_uptime:99.9,
+        minimum_penalty:1,
+        maximum_penalty:5
+      },
+      batna:"Other industrial buyer",
+      max_rounds:8
+    },
+    description:"Industrial electronics, automation and control components distributor"
+  },
+  {
+    name:"element14 India",
+    source_url:"https://in.element14.com/",
+    policy:{
+      price:{
+        target:128000,
+        minimum:118000,
+        maximum:140000
+      },
+      delivery:{
+        target_days:38,
+        minimum_days:25,
+        maximum_days:50
+      },
+      payment:{
+        preferred_days:30,
+        minimum_days:15,
+        maximum_days:90
+      },
+      sla:{
+        minimum_uptime:97,
+        maximum_uptime:99.9,
+        minimum_penalty:1,
+        maximum_penalty:6
+      },
+      batna:"Higher margin customer",
+      max_rounds:8
+    },
+    description:"Electronics and industrial systems distributor with procurement support"
+  }
+];
+
+const BUYER_DEF={
+  price:{
+    target:95000,
+    maximum:115000
+  },
+  delivery:{
+    target_days:25,
+    maximum_days:40
+  },
+  payment:{
+    preferred_days:60,
+    minimum_days:30
+  },
+  sla:{
+    minimum_uptime:99,
+    minimum_penalty:2,
+    maximum_penalty:7
+  },
+  batna:"Existing supplier at ₹118K",
+  max_rounds:8
+};
+
+const SUPP_DEF={
+  price:{
+    target:125000,
+    minimum:105000
+  },
+  delivery:{
+    target_days:35,
+    maximum_days:50
+  },
+  payment:{
+    preferred_days:30,
+    minimum_days:15
+  },
+  sla:{
+    minimum_uptime:98,
+    minimum_penalty:1,
+    maximum_penalty:6
+  },
+  batna:"Other customer offers ₹130K",
+  max_rounds:8
+};
+
+const RFQ_DEFS=[
+  {
+    name:"Northstar Components",
+    policy:SUPP_DEF
+  },
+  {
+    name:"Vertex Industrial",
+    policy:{
+      ...SUPP_DEF,
+      price:{
+        target:118000,
+        minimum:103000
+      },
+      delivery:{
+        target_days:31,
+        maximum_days:44
+      }
+    }
+  },
+  {
+    name:"Atlas Motion",
+    policy:{
+      ...SUPP_DEF,
+      price:{
+        target:121000,
+        minimum:108000
+      },
+      payment:{
+        preferred_days:45,
+        minimum_days:20
+      },
+      sla:{
+        minimum_uptime:99,
+        minimum_penalty:1,
+        maximum_penalty:5
+      }
+    }
+  }
+];
+
+const SUPPLIER_SOURCES=[
+  "https://www.mouser.in/",
+  "https://in.rsdelivers.com/",
+  "https://in.element14.com/"
+];
+
+const AUTONOMOUS_SUPPLIERS=
+  RFQ_DEFS.map(
+    (s,i)=>({
+      name:s.name,
+      source_url:SUPPLIER_SOURCES[i],
+      policy:s.policy,
+      description:
+        "Candidate supplier for autonomous procurement."
+    })
+  );
+
+function Badge({text,type}){
+  const cls=
+    `badge-${(
+      type
+      ||
+      text
+      ||
+      ""
+    )
+      .toLowerCase()
+      .replace(/ /g,"_")}`;
+
+  return (
+    <span
+      className={`text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide ${cls}`}
+    >
+      {text}
+    </span>
+  );
+}
+
+function Stat({label,value}){
+  return (
+    <div className="flex justify-between gap-3 py-1 border-b border-white/5">
+      <span className="text-[11px] text-gray-500">
+        {label}
+      </span>
+
+      <span className="text-xs font-semibold text-gray-200">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function UtilityBar({value,label}){
+  return (
+    <div>
+      <div className="flex justify-between text-[11px] mb-1">
+        <span className="text-gray-500">
+          {label}
+        </span>
+
+        <span className="font-semibold">
+          {Math.round(value*100)}%
+        </span>
+      </div>
+
+      <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+        <div
+          className="h-full bg-indigo-500 rounded-full"
+          style={{
+            width:`${
+              Math.max(
+                0,
+                Math.min(
+                  100,
+                  value*100
+                )
+              )
+            }%`
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PolicyForm({label,defaults,onChange}){
+  const [d,setD]=useState(defaults);
+
+  useEffect(
+    ()=>onChange(d),
+    [d]
+  );
+
+  const up=(path,val)=>
+    setD(
+      prev=>{
+        const n={...prev};
+        const parts=path.split(".");
+        let cur=n;
+
+        for(
+          let i=0;
+          i<parts.length-1;
+          i++
+        ){
+          cur[parts[i]]={
+            ...cur[parts[i]]
+          };
+
+          cur=cur[parts[i]];
+        }
+
+        cur[parts.at(-1)] =
+          isNaN(val)
+          ?val
+          :+val;
+
+        return n;
+      }
+    );
+
+  const F=({
+    p,
+    l,
+    min,
+    max,
+    step=1
+  })=>
+    <div>
+      <label>{l}</label>
+
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={
+          p
+            .split(".")
+            .reduce(
+              (o,k)=>o?.[k],
+              d
+            )
+          ??""
+        }
+        onChange={
+          e=>up(
+            p,
+            e.target.value
+          )
+        }
+      />
+    </div>;
+
+  const buyer=
+    label
+      .toLowerCase()
+      .includes("buyer");
+
+  return (
+    <div className="glass rounded-2xl p-5">
+
+      <div className="flex items-center justify-between mb-4">
+
+        <div>
+          <h3 className="font-black text-sm uppercase tracking-widest">
+            {label}
+          </h3>
+
+          <p className="text-[10px] text-gray-500 mt-1">
+            🔒 PRIVATE BUSINESS RULES — hidden from the other agent
+          </p>
+        </div>
+
+        <span className="text-[10px] px-2 py-1 rounded-full bg-white/5 text-gray-400">
+          {buyer?"BUYER":"SUPPLIER"} CONTROL
+        </span>
+
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+
+        <F
+          p="price.target"
+          l="Target Price (₹)"
+          min={1}
+        />
+
+        <F
+          p={
+            buyer
+            ?"price.maximum"
+            :"price.minimum"
+          }
+          l={
+            buyer
+            ?"Max Price (₹)"
+            :"Min Price (₹)"
+          }
+          min={1}
+        />
+
+        <F
+          p="delivery.target_days"
+          l="Delivery Target"
+          min={1}
+        />
+
+        <F
+          p="delivery.maximum_days"
+          l="Max Delivery"
+          min={1}
+        />
+
+        <F
+          p="payment.preferred_days"
+          l="Preferred Net"
+          min={1}
+        />
+
+        <F
+          p="payment.minimum_days"
+          l="Min Net"
+          min={1}
+        />
+
+        <F
+          p="sla.minimum_uptime"
+          l="Min Uptime %"
+          min={95}
+          max={100}
+          step={0.5}
+        />
+
+        <F
+          p="sla.maximum_penalty"
+          l="Max Penalty %"
+          min={0}
+          step={0.5}
+        />
+
+        <F
+          p="max_rounds"
+          l="Max Rounds"
+          min={1}
+          max={20}
+        />
+
+        <F
+          p="sla.minimum_penalty"
+          l="Min Penalty %"
+          min={0}
+          step={0.5}
+        />
+
+      </div>
+
+      <div className="mt-3">
+        <label>BATNA</label>
+
+        <input
+          value={d.batna||""}
+          onChange={
+            e=>up(
+              "batna",
+              e.target.value
+            )
+          }
+        />
+      </div>
+
+    </div>
+  );
+}
+
+function AgentPanel({
+  name,
+  role,
+  policy,
+  latest,
+  metrics
+}){
+
+  const buyer=role==="buyer";
+
+  return (
+    <div className="glass rounded-2xl p-5">
+
+      <div className="flex items-center justify-between mb-4">
+
+        <div className="flex items-center gap-3">
+
+          <div className="text-2xl">
+            {buyer?"🏢":"🏭"}
+          </div>
+
+          <div>
+            <h3 className="font-black">
+              {name}
+            </h3>
+
+            <p className="text-[10px] uppercase tracking-widest text-gray-500">
+              {role} agent • isolated policy
+            </p>
+          </div>
+
+        </div>
+
+        <span className="text-[10px] px-2 py-1 rounded-full bg-white/5 text-gray-400">
+          🔒 PRIVATE
+        </span>
+
+      </div>
+
+      <div className="space-y-1 mb-4">
+
+        <Stat
+          label="Target Price"
+          value={`₹${Number(
+            policy.price.target
+          ).toLocaleString()}`}
+        />
+
+        <Stat
+          label={
+            buyer
+            ?"Max Price"
+            :"Min Price"
+          }
+          value={`₹${Number(
+            buyer
+            ?policy.price.maximum
+            :policy.price.minimum
+          ).toLocaleString()}`}
+        />
+
+        <Stat
+          label="Delivery"
+          value={`${policy.delivery.target_days}d target / ${policy.delivery.maximum_days}d max`}
+        />
+
+        <Stat
+          label="Payment"
+          value={`Net ${policy.payment.preferred_days} pref / Net ${policy.payment.minimum_days} minimum`}
+        />
+
+        <Stat
+          label="SLA"
+          value={`${policy.sla.minimum_uptime}% uptime`}
+        />
+
+      </div>
+
+      {latest&&
+        <div className="soft rounded-xl p-3">
+
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider">
+            Latest position
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 mt-2">
+
+            <div>
+              <div className="text-[9px] text-gray-600">
+                PRICE
+              </div>
+              <div className="font-black text-sm">
+                ₹{Number(
+                  latest.price||0
+                ).toLocaleString()}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-[9px] text-gray-600">
+                DELIVERY
+              </div>
+              <div className="font-black text-sm">
+                {latest.delivery_days??"—"}d
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      }
+
+      {metrics&&
+        <div className="mt-4">
+
+          <UtilityBar
+            value={metrics}
+            label="Utility"
+          />
+
+        </div>
+      }
+
+    </div>
+  );
+}
+
+function NegotiationChart({rounds}){
+  const data=
+    (rounds||[]).map(
+      (r,i)=>({
+        round:i+1,
+        buyer:r.buyer?.price??null,
+        supplier:r.supplier?.price??null
+      })
+    );
+
+  return (
+    <div className="w-full h-72">
+
+      <ResponsiveContainer
+        width="100%"
+        height="100%"
+      >
+
+        <LineChart data={data}>
+
+          <CartesianGrid
+            strokeDasharray="3 3"
+            opacity={0.1}
+          />
+
+          <XAxis
+            dataKey="round"
+            stroke="#6b7280"
+            fontSize={10}
+          />
+
+          <YAxis
+            stroke="#6b7280"
+            fontSize={10}
+          />
+
+          <Tooltip
+            contentStyle={{
+              background:"#11131b",
+              border:"1px solid #303747",
+              borderRadius:"10px",
+              color:"#fff"
+            }}
+          />
+
+          <Legend />
+
+          <Line
+            type="monotone"
+            dataKey="buyer"
+            stroke="#818cf8"
+            strokeWidth={2}
+            dot={false}
+          />
+
+          <Line
+            type="monotone"
+            dataKey="supplier"
+            stroke="#34d399"
+            strokeWidth={2}
+            dot={false}
+          />
+
+        </LineChart>
+
+      </ResponsiveContainer>
+
+    </div>
+  );
+}
+
+function Rounds({rounds}){
+
+  return (
+    <div className="space-y-2">
+
+      {(rounds||[]).map(
+        (r,i)=>
+          <div
+            key={i}
+            className="soft rounded-xl p-3"
+          >
+
+            <div className="flex justify-between">
+
+              <span className="text-xs font-bold">
+                Round {i+1}
+              </span>
+
+              <Badge
+                text={
+                  r.decision
+                  ||"NEGOTIATION"
+                }
+                type={
+                  r.decision
+                }
+              />
+
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-3 mt-2">
+
+              <div>
+                <div className="text-[9px] text-gray-600 uppercase">
+                  Buyer
+                </div>
+
+                <div className="text-xs text-gray-300 mt-1">
+                  ₹{Number(
+                    r.buyer?.price||0
+                  ).toLocaleString()}
+                  {" · "}
+                  {r.buyer?.delivery_days??"—"}d
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[9px] text-gray-600 uppercase">
+                  Supplier
+                </div>
+
+                <div className="text-xs text-gray-300 mt-1">
+                  ₹{Number(
+                    r.supplier?.price||0
+                  ).toLocaleString()}
+                  {" · "}
+                  {r.supplier?.delivery_days??"—"}d
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+      )}
+
+    </div>
+  );
+}
+
+function Audit({events}){
+
+  return (
+    <div className="space-y-2">
+
+      {(events||[]).map(
+        (event,i)=>
+          <div
+            key={i}
+            className="soft rounded-xl p-3"
+          >
+
+            <div className="flex items-center justify-between">
+
+              <span className="text-xs font-bold">
+                {event.event_type
+                  ||event.type
+                  ||"AUDIT EVENT"
+                }
+              </span>
+
+              <span className="text-[9px] text-gray-600">
+                {event.timestamp
+                  ||""
+                }
+              </span>
+
+            </div>
+
+            <div className="text-[10px] text-gray-500 mt-1 break-all">
+              {event.hash
+                ||event.event_hash
+                ||""
+              }
+            </div>
+
+          </div>
+      )}
+
+      {!events?.length&&
+        <div className="text-xs text-gray-600">
+          No audit events loaded.
+        </div>
+      }
+
+    </div>
+  );
+}
+
+function ParetoPanel({pareto}){
+
+  if(!pareto)return null;
+
+  return (
+    <div className="glass rounded-2xl p-5 mt-4">
+
+      <div className="text-[10px] uppercase tracking-wider text-gray-500">
+        Pareto analysis
+      </div>
+
+      <div className="grid md:grid-cols-3 gap-3 mt-3">
+
+        <div className="soft rounded-xl p-3">
+          <div className="text-[10px] text-gray-600">
+            BUYER UTILITY
+          </div>
+
+          <div className="text-xl font-black mt-1">
+            {Math.round(
+              (pareto.buyer_utility||0)*100
+            )}%
+          </div>
+        </div>
+
+        <div className="soft rounded-xl p-3">
+          <div className="text-[10px] text-gray-600">
+            SUPPLIER UTILITY
+          </div>
+
+          <div className="text-xl font-black mt-1">
+            {Math.round(
+              (pareto.supplier_utility||0)*100
+            )}%
+          </div>
+        </div>
+
+        <div className="soft rounded-xl p-3">
+          <div className="text-[10px] text-gray-600">
+            JOINT UTILITY
+          </div>
+
+          <div className="text-xl font-black mt-1 text-emerald-300">
+            {Math.round(
+              (pareto.joint_utility||0)*100
+            )}%
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  );
+}
+
+function SecurityPanel({
+  request,
+  security,
+  setSecurity
+}){
+
+  const [scenario,setScenario]=useState(
+    "prompt_injection"
+  );
+
+  const runSecurity=async()=>{
+
+    setSecurity({
+      loading:true
+    });
+
+    try{
+
+      const r=await fetch(
+        `${API}/api/security/red-team`,
+        {
+          method:"POST",
+          headers:{
+            "Content-Type":
+              "application/json"
+          },
+          body:JSON.stringify({
+            scenario,
+            request
+          })
+        }
+      );
+
+      const d=await r.json();
+
+      setSecurity(d);
+
+    }catch(e){
+
+      setSecurity({
+        error:e?.message
+      });
+
+    }
+  };
+
+  return (
+    <div className="glass rounded-2xl p-5">
+
+      <div className="text-[10px] uppercase tracking-wider text-gray-500">
+        Security testing
+      </div>
+
+      <h3 className="font-black mt-1">
+        Guardrail red-team
+      </h3>
+
+      <p className="text-xs text-gray-500 mt-1">
+        Test prompt injection, policy violations, and unsafe proposals.
+      </p>
+
+      <div className="mt-4">
+
+        <label>
+          Scenario
+        </label>
+
+        <select
+          value={scenario}
+          onChange={
+            e=>setScenario(e.target.value)
+          }
+        >
+          <option value="prompt_injection">
+            Prompt injection
+          </option>
+
+          <option value="price_violation">
+            Price violation
+          </option>
+
+          <option value="delivery_violation">
+            Delivery violation
+          </option>
+        </select>
+
+      </div>
+
+      <button
+        className="btn btn-secondary mt-4"
+        onClick={runSecurity}
+        disabled={security?.loading}
+      >
+        {security?.loading
+          ?"Testing..."
+          :"Run security test"
+        }
+      </button>
+
+      {security?.error&&
+        <div className="text-xs text-red-300 mt-3">
+          {security.error}
+        </div>
+      }
+
+      {security&&!security.loading&&!security.error&&
+        <div className="mt-4 soft rounded-xl p-3">
+
+          <div className="flex items-center justify-between">
+
+            <span className="text-[10px] text-gray-500 uppercase">
+              Result
+            </span>
+
+            <Badge
+              text={
+                security.allowed
+                ?"ALLOWED"
+                :"BLOCKED"
+              }
+              type={
+                security.allowed
+                ?"allowed"
+                :"blocked"
+              }
+            />
+
+          </div>
+
+          <div className="text-xs text-gray-400 mt-2">
+            {security.reason
+              ||"Security evaluation completed."
+            }
+          </div>
+
+        </div>
+      }
+
+    </div>
+  );
+}
+
+function RFQPanel({payload}){
+
+  const [rfq,setRfq]=useState(null);
+  const [loading,setLoading]=useState(false);
+
+  const runRFQ=async()=>{
+
+    setLoading(true);
+    setRfq(null);
+
+    try{
+
+      const r=await fetch(
+        `${API}/api/autonomous/procure`,
+        {
+          method:"POST",
+          headers:{
+            "Content-Type":
+              "application/json"
+          },
+          body:JSON.stringify({
+            text:
+              `Product: ${payload.product_name}. Quantity: ${payload.quantity} units.`,
+            suppliers:
+              AUTONOMOUS_SUPPLIERS,
+            buyer:payload.buyer,
+            buyer_name:
+              payload.buyer_name,
+            max_attempts:3,
+            minimum_confidence:0.4,
+            minimum_supplier_score:0.3,
+            execution_mode:"simulation"
+          })
+        }
+      );
+
+      const d=await r.json();
+
+      if(!r.ok){
+
+        throw new Error(
+          typeof d.detail==="string"
+          ?d.detail
+          :JSON.stringify(
+              d.detail||d
+            )
+        );
+
+      }
+
+      setRfq(d);
+
+    }catch(e){
+
+      setRfq({
+        error:e.message
+      });
+
+    }finally{
+
+      setLoading(false);
+
+    }
+  };
+
+  return (
+    <div className="glass rounded-2xl p-5">
+
+      <div className="text-[10px] uppercase tracking-wider text-gray-500">
+        Multi-supplier RFQ
+      </div>
+
+      <h3 className="font-black mt-1">
+        Autonomous supplier selection
+      </h3>
+
+      <p className="text-xs text-gray-500 mt-1">
+        Compare multiple suppliers and let Nexora choose the strongest candidate.
+      </p>
+
+      <button
+        className="btn btn-primary mt-4"
+        onClick={runRFQ}
+        disabled={loading}
+      >
+        {loading
+          ?"Running RFQ..."
+          :"Run 3-supplier RFQ"
+        }
+      </button>
+
+      {rfq?.error&&
+        <div className="text-xs text-red-300 mt-3">
+          {rfq.error}
+        </div>
+      }
+
+      {rfq&&!rfq.error&&
+        <div className="mt-4">
+
+          <div className="grid grid-cols-2 gap-2">
+
+            <div className="soft rounded-xl p-3">
+              <div className="text-[9px] text-gray-600">
+                SELECTED
+              </div>
+
+              <div className="font-black text-sm mt-1">
+                {rfq.selected_supplier?.supplier?.name
+                  ||"—"
+                }
+              </div>
+            </div>
+
+            <div className="soft rounded-xl p-3">
+              <div className="text-[9px] text-gray-600">
+                VERIFIED
+              </div>
+
+              <div className="font-black text-sm mt-1">
+                {rfq.verified
+                  ?"YES"
+                  :"NO"
+                }
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      }
+
+    </div>
+  );
+}
+
+function ContractCard({
+  contract,
+  negId
+}){
+
+  if(!contract)return null;
+
+  return (
+    <section className="glass rounded-3xl p-5 md:p-6 border border-emerald-500/20">
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
+
+        <div>
+
+          <p className="text-[11px] uppercase tracking-[.18em] text-emerald-300 font-bold">
+            Verified outcome
+          </p>
+
+          <h3 className="text-xl font-black mt-1">
+            Procurement agreement
+          </h3>
+
+          <p className="text-xs text-gray-500 mt-2">
+            Negotiation {negId||"—"}
+          </p>
+
+        </div>
+
+        <Badge
+          text="VERIFIED"
+          type="accept"
+        />
+
+      </div>
+
+      <div className="grid md:grid-cols-4 gap-3 mt-5">
+
+        <div className="kpi rounded-2xl p-4">
+          <div className="text-[10px] text-gray-500">
+            PRICE
+          </div>
+
+          <div className="text-xl font-black mt-1">
+            ₹{Number(
+              contract.price||0
+            ).toLocaleString()}
+          </div>
+        </div>
+
+        <div className="kpi rounded-2xl p-4">
+          <div className="text-[10px] text-gray-500">
+            DELIVERY
+          </div>
+
+          <div className="text-xl font-black mt-1">
+            {contract.delivery_days??"—"} days
+          </div>
+        </div>
+
+        <div className="kpi rounded-2xl p-4">
+          <div className="text-[10px] text-gray-500">
+            PAYMENT
+          </div>
+
+          <div className="text-xl font-black mt-1">
+            Net {contract.payment_days??"—"}
+          </div>
+        </div>
+
+        <div className="kpi rounded-2xl p-4">
+          <div className="text-[10px] text-gray-500">
+            SLA
+          </div>
+
+          <div className="text-xl font-black mt-1">
+            {contract.sla_uptime??"—"}%
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+  );
+}
+
+function SystemArchitecture(){
+
+  return (
+    <div className="grid md:grid-cols-4 gap-3">
+
+      <div className="soft rounded-xl p-3">
+        <span className="text-gray-500">
+          INPUT LAYER
+        </span>
+
+        <div className="font-bold text-cyan-300 mt-1">
+          ✓ PROCUREMENT READ
+        </div>
+
+        <div className="text-gray-600 mt-1">
+          RFQ + external source evidence
+        </div>
+      </div>
+
+      <div className="soft rounded-xl p-3">
+        <span className="text-gray-500">
+          AGENT LAYER
+        </span>
+
+        <div className="font-bold text-emerald-300 mt-1">
+          ✓ BUYER + SUPPLIER
+        </div>
+
+        <div className="text-gray-600 mt-1">
+          External agent runtime
+        </div>
+      </div>
+
+      <div className="soft rounded-xl p-3">
+        <span className="text-gray-500">
+          DECISION LAYER
+        </span>
+
+        <div className="font-bold text-emerald-300 mt-1">
+          ✓ DETERMINISTIC
+        </div>
+
+        <div className="text-gray-600 mt-1">
+          Policy + legal + risk
+        </div>
+      </div>
+
+      <div className="soft rounded-xl p-3">
+        <span className="text-gray-500">
+          AUDIT LAYER
+        </span>
+
+        <div className="font-bold text-emerald-300 mt-1">
+          ✓ HASH VERIFIED
+        </div>
+
+        <div className="text-gray-600 mt-1">
+          Traceable negotiation history
+        </div>
+      </div>
+
+      <div className="md:col-span-4 mt-1 rounded-xl border border-white/5 bg-white/5 p-3 text-xs text-gray-500">
+        The Buyer and Supplier agents are connected through an external agent API. Nexora keeps negotiation authority, validation, and contract decisions in its own application layer.
+      </div>
+
+    </div>
+  );
+}
+
+function DecisionTrace({workflow}){
+
+  if(!workflow){
+    return null;
+  }
+
+  const reasoning=
+    workflow.reasoning
+    ||{};
+
+  const ranking=
+    workflow.ranking
+    ||workflow.supplier_ranking
+    ||[];
+
+  const attempts=
+    workflow.attempts
+    ||[];
+
+  const recoveryEvents=
+    workflow.recovery_events
+    ||[];
+
+  const reasoningHistory=
+    workflow.reasoning_history
+    ||[];
+
+  const selected=
+    workflow.selected_supplier;
+
+  const selectedSupplier=
+    selected?.supplier
+    ||selected;
+
+  const evidenceAssessment=
+    selectedSupplier?.evidence_assessment
+    ||null;
+
+  const claims=
+    evidenceAssessment?.claims
+    ||[];
+
+  const aiEnabled=
+    reasoning.reasoning_source==="lyzr"
+    ||
+    reasoning.ai_summary
+    ||
+    reasoning.recommended_strategy;
+
+  const pct=value=>
+    value===undefined||value===null
+    ?"—"
+    :`${Math.round(Number(value)*100)}%`;
+
+  const stageCopy={
+    read:
+      "Captured procurement requirements, source context, and supplier evidence.",
+
+    reason:
+      aiEnabled
+      ?"AI reasoning converted the request into priorities, constraints, risks, and strategy."
+      :"Deterministic reasoning converted the request into priorities and constraints.",
+
+    supplier_selection:
+      "Suppliers were ranked using commercial compatibility and available evidence.",
+
+    act:
+      "The selected supplier entered the existing autonomous negotiation engine.",
+
+    verify:
+      "The resulting agreement was independently checked before being accepted."
+  };
+
+  return (
+    <section
+      className={`glass rounded-3xl p-5 md:p-6 ${
+        workflow.verified===true
+        ?"border border-emerald-500/20"
+        :workflow.status==="error"
+        ||workflow.status==="recovery_exhausted"
+        ?"border border-red-500/20"
+        :"border border-indigo-500/20"
+      }`}
+    >
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
+
+        <div>
+
+          <p className="text-[11px] uppercase tracking-[.18em] text-cyan-300 font-bold">
+            Autonomous decision trace
+          </p>
+
+          <h3 className="text-xl font-black mt-1">
+            Why Nexora did what it did
+          </h3>
+
+          <p className="text-xs text-gray-500 mt-2">
+            Workflow {workflow.workflow_id||"starting…"} · {
+              workflow.verified===true
+              ?"Verified outcome"
+              :workflow.status==="recovery_exhausted"
+              ?"Recovery exhausted"
+              :workflow.status==="error"
+              ?"Execution error"
+              :"Running"
+            }
+          </p>
+
+          {workflow.anakin?.enabled&&
+            <p className="text-[11px] text-purple-300/80 mt-2">
+              Anakin supplied live supplier-web evidence before Nexora ranked candidates.
+              {workflow.anakin.authenticated
+                ?" Authenticated API mode."
+                :" Zero-touch read mode."}
+            </p>
+          }
+
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+
+          <span className="text-[10px] px-2.5 py-1 rounded-full bg-cyan-950 text-cyan-300">
+            {aiEnabled
+              ?"🧠 AI REASONING"
+              :"RULE-BASED REASONING"
+            }
+          </span>
+
+          {workflow.anakin?.enabled&&
+            <span className="text-[10px] px-2.5 py-1 rounded-full bg-purple-950 text-purple-300">
+              ◎ ANAKIN LIVE WEB · {workflow.anakin.sources_read||0} READ
+            </span>
+          }
+
+          {recoveryEvents.length>0&&
+            <span className="text-[10px] px-2.5 py-1 rounded-full bg-orange-950 text-orange-300">
+              ↻ RECOVERY USED
+            </span>
+          }
+
+        </div>
+
+      </div>
+
+      <div className="grid md:grid-cols-5 gap-3 mt-5">
+
+        {(workflow.stages||[]).map(
+          (stage,i)=>{
+
+            const done=
+              stage.state==="complete";
+
+            const failed=
+              stage.state==="failed";
+
+            const running=
+              stage.state==="running";
+
+            return (
+              <div
+                key={stage.key}
+                className={`rounded-2xl p-4 border ${
+                  done
+                  ?"border-emerald-500/20 bg-emerald-950/10"
+                  :failed
+                  ?"border-red-500/20 bg-red-950/10"
+                  :running
+                  ?"border-indigo-500/30 bg-indigo-950/10 stage-running"
+                  :"border-white/5 bg-white/5"
+                }`}
+              >
+
+                <div className="flex items-center gap-2">
+
+                  <div
+                    className={`h-7 w-7 rounded-full grid place-items-center text-xs font-black ${
+                      done
+                      ?"bg-emerald-900 text-emerald-300"
+                      :failed
+                      ?"bg-red-900 text-red-300"
+                      :running
+                      ?"bg-indigo-900 text-indigo-300"
+                      :"bg-white/10 text-gray-500"
+                    }`}
+                  >
+                    {done
+                      ?"✓"
+                      :failed
+                      ?"!"
+                      :i+1
+                    }
+                  </div>
+
+                  <span className="font-black text-xs tracking-widest">
+                    {stage.label}
+                  </span>
+
+                </div>
+
+                <div className="text-[11px] text-gray-500 mt-3">
+
+                  {done
+                    ?"Complete"
+                    :failed
+                    ?"Failed"
+                    :running
+                    ?"Executing…"
+                    :"Waiting"
+                  }
+
+                </div>
+
+                {stageCopy[stage.key]&&
+                  <div className="text-[10px] text-gray-600 mt-2 leading-relaxed">
+                    {stageCopy[stage.key]}
+                  </div>
+                }
+
+              </div>
+            );
+          }
+        )}
+
+      </div>
+
+      {reasoning&&
+
+        <div className="mt-4 grid lg:grid-cols-3 gap-3">
+
+          <div className="soft rounded-xl p-4">
+
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider">
+              AI confidence
+            </div>
+
+            <div className="text-2xl font-black mt-1">
+              {pct(
+                reasoning.ai_confidence
+                ??
+                reasoning.confidence
+              )}
+            </div>
+
+            <div className="text-[10px] text-gray-600 mt-1">
+              Confidence in the procurement strategy
+            </div>
+
+          </div>
+
+          <div className="soft rounded-xl p-4">
+
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider">
+              Hard constraints
+            </div>
+
+            <div className="text-2xl font-black mt-1">
+              {reasoning.hard_constraints?.length||0}
+            </div>
+
+            <div className="text-[10px] text-gray-600 mt-1">
+              Constraints that should not be casually relaxed
+            </div>
+
+          </div>
+
+          <div className="soft rounded-xl p-4">
+
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider">
+              Identified risks
+            </div>
+
+            <div className="text-2xl font-black mt-1">
+              {reasoning.risks?.length||0}
+            </div>
+
+            <div className="text-[10px] text-gray-600 mt-1">
+              Risks discovered before execution
+            </div>
+
+          </div>
+
+        </div>
+
+      }
+
+      {(reasoning.ai_summary
+        ||
+        reasoning.recommended_strategy
+        ||
+        reasoning.decision_rationale
+      )&&
+
+        <div className="mt-4 grid lg:grid-cols-3 gap-3">
+
+          {reasoning.ai_summary&&
+
+            <div className="simple-card rounded-2xl p-4 border border-indigo-500/20">
+
+              <div className="text-[10px] uppercase tracking-wider text-indigo-300 font-bold">
+                AI assessment
+              </div>
+
+              <p className="text-sm text-gray-300 mt-2 leading-relaxed">
+                {reasoning.ai_summary}
+              </p>
+
+            </div>
+
+          }
+
+          {reasoning.recommended_strategy&&
+
+            <div className="simple-card rounded-2xl p-4 border border-cyan-500/20">
+
+              <div className="text-[10px] uppercase tracking-wider text-cyan-300 font-bold">
+                Recommended strategy
+              </div>
+
+              <p className="text-sm text-gray-300 mt-2 leading-relaxed">
+                {reasoning.recommended_strategy}
+              </p>
+
+            </div>
+
+          }
+
+          {reasoning.decision_rationale&&
+
+            <div className="simple-card rounded-2xl p-4 border border-emerald-500/20">
+
+              <div className="text-[10px] uppercase tracking-wider text-emerald-300 font-bold">
+                Decision rationale
+              </div>
+
+              <p className="text-sm text-gray-300 mt-2 leading-relaxed">
+                {reasoning.decision_rationale}
+              </p>
+
+            </div>
+
+          }
+
+        </div>
+
+      }
+
+      {reasoning.priorities?.length>0&&
+
+        <div className="mt-4 simple-card rounded-2xl p-4">
+
+          <div className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">
+            Priority order
+          </div>
+
+          <div className="flex flex-wrap gap-2 mt-3">
+
+            {reasoning.priorities.map(
+              (x,i)=>
+                <span
+                  key={i}
+                  className="text-[10px] px-2.5 py-1 rounded-full bg-white/5 text-gray-300"
+                >
+                  {i+1}. {x}
+                </span>
+            )}
+
+          </div>
+
+        </div>
+
+      }
+
+      {selected&&
+
+        <div className="mt-4 simple-card rounded-2xl p-4">
+
+          <div className="flex flex-wrap items-start justify-between gap-3">
+
+            <div>
+
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider">
+                Why this supplier
+              </div>
+
+              <div className="text-lg font-black mt-1">
+                {selectedSupplier?.name
+                  ||"Selected supplier"
+                }
+              </div>
+
+              <div className="text-xs text-gray-500 mt-1">
+                {selected.recommendation
+                  ||"Selected candidate"
+                }
+
+                {" · "}
+
+                compatibility{" "}
+
+                {pct(
+                  selected.compatibility_score
+                )}
+
+              </div>
+
+            </div>
+
+            <div className="text-right">
+
+              <div className="text-[10px] text-gray-500 uppercase">
+                Evidence score
+              </div>
+
+              <div className="text-xl font-black text-cyan-300 mt-1">
+                {pct(
+                  selected.evidence_score
+                )}
+              </div>
+
+            </div>
+
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-4">
+
+            {[
+              [
+                "Price",
+                selected.price_score
+              ],
+              [
+                "Delivery",
+                selected.delivery_score
+              ],
+              [
+                "Payment",
+                selected.payment_score
+              ],
+              [
+                "SLA",
+                selected.sla_score
+              ],
+              [
+                "Evidence",
+                selected.evidence_score
+              ]
+            ].map(
+              ([label,value])=>
+
+                <div
+                  key={label}
+                  className="soft rounded-xl p-3"
+                >
+
+                  <div className="text-[9px] uppercase tracking-wider text-gray-600">
+                    {label}
+                  </div>
+
+                  <div className="text-sm font-black mt-1">
+                    {pct(value)}
+                  </div>
+
+                </div>
+            )}
+
+          </div>
+
+          {(selected.risk_flags||[]).length>0&&
+
+            <div className="mt-3 flex flex-wrap gap-2">
+
+              {selected.risk_flags.map(
+                (r,i)=>
+
+                  <span
+                    key={i}
+                    className="text-[10px] px-2.5 py-1 rounded-full bg-red-950 text-red-300"
+                  >
+                    ⚠ {r}
+                  </span>
+              )}
+
+            </div>
+
+          }
+
+        </div>
+
+      }
+
+      {claims.length>0&&
+
+        <div className="mt-4">
+
+          <div className="text-[10px] uppercase tracking-wider text-gray-500 font-bold mb-2">
+            Supplier web evidence
+          </div>
+
+          <div className="space-y-2">
+
+            {claims.map(
+              (claim,index)=>{
+
+                const conflict=
+                  claim.status==="conflict";
+
+                return (
+                  <div
+                    key={`${claim.field}-${index}`}
+                    className={`rounded-xl border p-3 ${
+                      conflict
+                      ?"border-red-900/40 bg-red-950/15"
+                      :"border-emerald-900/30 bg-emerald-950/10"
+                    }`}
+                  >
+
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+
+                      <div className="flex items-center gap-2">
+
+                        <span>
+                          {conflict
+                            ?"⚠"
+                            :"✓"
+                          }
+                        </span>
+
+                        <span className="text-xs font-bold capitalize">
+                          {claim.field?.replaceAll(
+                            "_",
+                            " "
+                          )}
+                        </span>
+
+                      </div>
+
+                      <span
+                        className={`text-[9px] font-black uppercase ${
+                          conflict
+                          ?"text-red-300"
+                          :"text-emerald-300"
+                        }`}
+                      >
+                        {claim.status}
+                      </span>
+
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-2 mt-2 text-xs">
+
+                      <div className="soft rounded-lg p-2">
+
+                        <span className="text-gray-600">
+                          Website
+                        </span>
+
+                        <div className="font-bold mt-1">
+                          {claim.observed_value}
+                        </div>
+
+                      </div>
+
+                      <div className="soft rounded-lg p-2">
+
+                        <span className="text-gray-600">
+                          Required
+                        </span>
+
+                        <div className="font-bold mt-1">
+                          {claim.required_value}
+                        </div>
+
+                      </div>
+
+                    </div>
+
+                    <p
+                      className={`text-[10px] mt-2 ${
+                        conflict
+                        ?"text-red-300"
+                        :"text-gray-500"
+                      }`}
+                    >
+                      {claim.explanation}
+                    </p>
+
+                  </div>
+                );
+              }
+            )}
+
+          </div>
+
+        </div>
+
+      }
+
+      {(attempts.length>0
+        ||
+        recoveryEvents.length>0
+      )&&
+
+        <div className="mt-4">
+
+          <div className="flex items-center justify-between mb-2">
+
+            <div>
+
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">
+                Autonomous recovery
+              </div>
+
+              <div className="text-xs text-gray-600 mt-1">
+                A failed execution can become new evidence for the next decision.
+              </div>
+
+            </div>
+
+            <span className="text-[10px] px-2 py-1 rounded-full bg-orange-950 text-orange-300">
+              {attempts.length}
+              {" "}
+              attempt{attempts.length===1?"":"s"}
+            </span>
+
+          </div>
+
+          <div className="space-y-2">
+
+            {attempts.map(
+              (a,i)=>{
+
+                const passed=
+                  a.verified;
+
+                return (
+                  <div
+                    key={`${a.attempt}-${i}`}
+                    className={`rounded-xl border p-4 ${
+                      passed
+                      ?"border-emerald-500/20 bg-emerald-950/10"
+                      :"border-orange-900/30 bg-orange-950/10"
+                    }`}
+                  >
+
+                    <div className="flex items-center justify-between gap-3">
+
+                      <div>
+
+                        <span className="text-xs font-black">
+                          Attempt {a.attempt}
+                        </span>
+
+                        <span className="text-xs text-gray-500">
+                          {" · "}
+                          {a.supplier}
+                        </span>
+
+                      </div>
+
+                      <span
+                        className={`text-[10px] font-black ${
+                          passed
+                          ?"text-emerald-300"
+                          :"text-orange-300"
+                        }`}
+                      >
+                        {passed
+                          ?"✓ VERIFIED"
+                          :(a.decision||"FAILED")
+                            .replaceAll(
+                              "_",
+                              " "
+                            )
+                            .toUpperCase()
+                        }
+                      </span>
+
+                    </div>
+
+                    {a.violations?.length>0&&
+
+                      <div className="mt-2 rounded-lg bg-red-950/20 border border-red-900/30 p-2">
+
+                        <div className="text-[9px] uppercase tracking-wider text-red-400 font-bold">
+                          Why it failed
+                        </div>
+
+                        <div className="text-xs text-red-300 mt-1">
+                          {a.violations.join(
+                            " · "
+                          )}
+                        </div>
+
+                      </div>
+
+                    }
+
+                    {a.recovery_triggered&&
+
+                      <div className="mt-2 text-[10px] text-orange-300">
+                        ↻ Nexora triggered recovery and re-evaluated the remaining candidates.
+                      </div>
+
+                    }
+
+                  </div>
+                );
+              }
+            )}
+
+          </div>
+
+        </div>
+
+      }
+
+      {recoveryEvents.length>0&&
+
+        <details className="mt-4">
+
+          <summary>
+
+            <span className="text-xs font-bold text-indigo-300">
+              Open recovery reasoning ▾
+            </span>
+
+          </summary>
+
+          <div className="mt-3 space-y-2">
+
+            {recoveryEvents.map(
+              (event,index)=>
+
+                <div
+                  key={index}
+                  className="rounded-xl border border-white/5 bg-white/5 p-3"
+                >
+
+                  <div className="flex items-center justify-between gap-3">
+
+                    <span className="text-xs font-bold">
+                      {event.trigger
+                        ||"RECOVERY"
+                      }
+                    </span>
+
+                    <span className="text-[10px] text-gray-600">
+                      Attempt{" "}
+                      {event.attempt||"—"}
+                    </span>
+
+                  </div>
+
+                  <p className="text-[10px] text-gray-500 mt-2 leading-relaxed">
+                    {event.message
+                      ||"Recovery was triggered."
+                    }
+                  </p>
+
+                </div>
+            )}
+
+          </div>
+
+        </details>
+
+      }
+
+      {reasoningHistory.length>1&&
+
+        <details className="mt-4">
+
+          <summary>
+
+            <span className="text-xs font-bold text-indigo-300">
+              Open reasoning history (
+              {reasoningHistory.length}
+              {" "}
+              passes) ▾
+            </span>
+
+          </summary>
+
+          <div className="mt-3 space-y-2">
+
+            {reasoningHistory.map(
+              (item,index)=>
+
+                <div
+                  key={index}
+                  className="rounded-xl border border-white/5 bg-white/5 p-3"
+                >
+
+                  <div className="text-[10px] uppercase tracking-wider text-gray-600">
+                    Reasoning pass {index+1}
+                  </div>
+
+                  {item.ai_summary&&
+                    <p className="text-xs text-gray-400 mt-2">
+                      {item.ai_summary}
+                    </p>
+                  }
+
+                  {item.recommended_strategy&&
+                    <p className="text-xs text-gray-500 mt-2">
+                      <span className="text-gray-300 font-bold">
+                        Strategy:
+                      </span>
+                      {" "}
+                      {item.recommended_strategy}
+                    </p>
+                  }
+
+                  {item.decision_rationale&&
+                    <p className="text-xs text-gray-500 mt-2">
+                      <span className="text-gray-300 font-bold">
+                        Rationale:
+                      </span>
+                      {" "}
+                      {item.decision_rationale}
+                    </p>
+                  }
+
+                </div>
+            )}
+
+          </div>
+
+        </details>
+
+      }
+
+      {reasoning.risks?.length>0&&
+
+        <details className="mt-4">
+
+          <summary>
+
+            <span className="text-xs font-bold text-yellow-300">
+              Open identified risks (
+              {reasoning.risks.length}
+              ) ▾
+            </span>
+
+          </summary>
+
+          <div className="mt-3 grid md:grid-cols-2 gap-2">
+
+            {reasoning.risks.map(
+              (risk,index)=>
+
+                <div
+                  key={index}
+                  className="rounded-xl border border-yellow-900/30 bg-yellow-950/10 p-3 text-xs text-yellow-200"
+                >
+                  ⚠ {risk}
+                </div>
+            )}
+
+          </div>
+
+        </details>
+
+      }
+
+    </section>
+  );
+}
+function GovernanceDemo({buyer}){
+
+  const [busy,setBusy]=useState(false);
+
+  const [data,setData]=useState(null);
+
+  const [error,setError]=useState(null);
+
+
+  const run=async()=>{
+
+    setBusy(true);
+
+    setError(null);
+
+    try{
+
+      const response=
+        await fetch(
+          `${API}/api/autonomous/governance-demo`,
+          {
+            method:"POST",
+            headers:{
+              "Content-Type":
+                "application/json"
+            },
+            body:JSON.stringify({
+              buyer
+            })
+          }
+        );
+
+      const body=
+        await response.json();
+
+      if(!response.ok){
+
+        throw new Error(
+          typeof body.detail==="string"
+          ?body.detail
+          :JSON.stringify(
+              body.detail
+              ||body
+            )
+        );
+
+      }
+
+      setData(body);
+
+    }catch(e){
+
+      setError(
+        e?.message
+        ||"Governance demo failed."
+      );
+
+    }finally{
+
+      setBusy(false);
+
+    }
+
+  };
+
+
+  const money=value=>
+    `₹${Number(
+      value||0
+    ).toLocaleString()}`;
+
+
+  return (
+    <section className="glass rounded-3xl p-5 md:p-6 border border-amber-500/20">
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
+
+        <div>
+
+          <p className="text-[11px] uppercase tracking-[.18em] text-amber-300 font-bold">
+            AI vs Governance
+          </p>
+
+          <h3 className="text-xl font-black mt-1">
+            Autonomous does not mean unrestricted
+          </h3>
+
+          <p className="text-xs text-gray-500 mt-2 max-w-3xl">
+            Nexora lets the agent recommend an action,
+            then sends that action through the same
+            deterministic policy firewall used by the
+            negotiation engine.
+          </p>
+
+        </div>
+
+
+        <button
+          className="btn btn-secondary"
+          onClick={run}
+          disabled={busy}
+        >
+          {
+            busy
+            ?"Running governance check…"
+            :"⚖ Run governance demo"
+          }
+        </button>
+
+      </div>
+
+
+      {error&&
+
+        <div className="mt-4 rounded-xl border border-red-900/30 bg-red-950/20 p-3 text-xs text-red-300">
+          {error}
+        </div>
+
+      }
+
+
+      {data&&
+
+        <div className="mt-5 space-y-3">
+
+          <div className="grid lg:grid-cols-2 gap-3">
+
+            
+
+            <div className="simple-card rounded-2xl p-4 border border-red-500/20">
+
+              <div className="flex items-center justify-between gap-3">
+
+                <div>
+
+                  <div className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">
+                    AI proposal
+                  </div>
+
+                  <div className="text-xl font-black mt-1">
+                    {money(
+                      data.ai_proposal?.price
+                    )}
+                  </div>
+
+                </div>
+
+
+                <span className="text-[10px] font-black text-red-300 px-2 py-1 rounded-full bg-red-950">
+                  {
+                    data.ai_decision?.allowed
+                    ?"ALLOWED"
+                    :"BLOCKED"
+                  }
+                </span>
+
+              </div>
+
+
+              <div className="grid grid-cols-3 gap-2 mt-3">
+
+                <div className="soft rounded-xl p-2">
+
+                  <div className="text-[9px] text-gray-600">
+                    DELIVERY
+                  </div>
+
+                  <div className="text-xs font-bold mt-1">
+                    {data.ai_proposal?.delivery_days}d
+                  </div>
+
+                </div>
+
+
+                <div className="soft rounded-xl p-2">
+
+                  <div className="text-[9px] text-gray-600">
+                    PAYMENT
+                  </div>
+
+                  <div className="text-xs font-bold mt-1">
+                    Net {data.ai_proposal?.payment_days}
+                  </div>
+
+                </div>
+
+
+                <div className="soft rounded-xl p-2">
+
+                  <div className="text-[9px] text-gray-600">
+                    SLA
+                  </div>
+
+                  <div className="text-xs font-bold mt-1">
+                    {data.ai_proposal?.sla_uptime}%
+                  </div>
+
+                </div>
+
+              </div>
+
+
+              {(data.ai_decision?.violations||[]).length>0&&
+
+                <div className="mt-3 rounded-xl bg-red-950/20 border border-red-900/30 p-3">
+
+                  <div className="text-[9px] uppercase tracking-wider text-red-400 font-bold">
+                    Governance blocked it
+                  </div>
+
+                  <div className="text-xs text-red-300 mt-1">
+                    {
+                      data.ai_decision.violations.join(
+                        " · "
+                      )
+                    }
+                  </div>
+
+                </div>
+
+              }
+
+            </div>
+
+
+            
+
+            <div className="simple-card rounded-2xl p-4 border border-emerald-500/20">
+
+              <div className="flex items-center justify-between gap-3">
+
+                <div>
+
+                  <div className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">
+                    Nexora correction
+                  </div>
+
+                  <div className="text-xl font-black mt-1">
+                    {money(
+                      data.corrected_proposal?.price
+                    )}
+                  </div>
+
+                </div>
+
+
+                <span className="text-[10px] font-black text-emerald-300 px-2 py-1 rounded-full bg-emerald-950">
+                  {
+                    data.corrected_decision?.allowed
+                    ?"ALLOWED"
+                    :"BLOCKED"
+                  }
+                </span>
+
+              </div>
+
+
+              <div className="grid grid-cols-3 gap-2 mt-3">
+
+                <div className="soft rounded-xl p-2">
+
+                  <div className="text-[9px] text-gray-600">
+                    DELIVERY
+                  </div>
+
+                  <div className="text-xs font-bold mt-1">
+                    {data.corrected_proposal?.delivery_days}d
+                  </div>
+
+                </div>
+
+
+                <div className="soft rounded-xl p-2">
+
+                  <div className="text-[9px] text-gray-600">
+                    PAYMENT
+                  </div>
+
+                  <div className="text-xs font-bold mt-1">
+                    Net {data.corrected_proposal?.payment_days}
+                  </div>
+
+                </div>
+
+
+                <div className="soft rounded-xl p-2">
+
+                  <div className="text-[9px] text-gray-600">
+                    SLA
+                  </div>
+
+                  <div className="text-xs font-bold mt-1">
+                    {data.corrected_proposal?.sla_uptime}%
+                  </div>
+
+                </div>
+
+              </div>
+
+
+              <div className="mt-3 rounded-xl bg-emerald-950/15 border border-emerald-900/30 p-3">
+
+                <div className="text-[9px] uppercase tracking-wider text-emerald-400 font-bold">
+                  Governance decision
+                </div>
+
+                <div className="text-xs text-emerald-300 mt-1">
+                  {
+                    data.corrected_decision?.reason
+                  }
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+
+
+          <div className="rounded-2xl bg-white/5 border border-white/5 p-4 text-xs text-gray-400">
+
+            <span className="text-gray-200 font-bold">
+              Lesson:
+            </span>
+
+            {" "}
+
+            {data.lesson}
+
+          </div>
+
+        </div>
+
+      }
+
+
+      {!data&&!error&&
+
+        <div className="mt-5 rounded-2xl bg-white/5 border border-white/5 p-6 text-center text-xs text-gray-600">
+
+          Run the demo to show an AI recommendation
+          being blocked and corrected by enterprise
+          governance.
+
+        </div>
+
+      }
+
+    </section>
+  );
+}
+function App(){
+
+  const [buyer,setBuyer]=
+    useState(BUYER_DEF);
+
+  const [supplier,setSupplier]=
+    useState(SUPP_DEF);
+
+  const [buyerName,setBuyerName]=
+    useState("Acme Corp");
+
+  const [supplierName,setSupplierName]=
+    useState("Global Supply Ltd");
+
+  const [product,setProduct]=
+    useState("Industrial Servo Motors");
+
+  const [qty,setQty]=
+    useState(500);
+
+  const [loading,setLoading]=
+    useState(false);
+
+  const [result,setResult]=
+    useState(null);
+
+  const [audit,setAudit]=
+    useState([]);
+
+  const [tab,setTab]=
+    useState("arena");
+
+  const [security,setSecurity]=
+    useState(null);
+
+  const [auditIntegrity,setAuditIntegrity]=
+    useState(null);
+
+  const [err,setErr]=
+    useState(null);
+
+  const [showAdvanced,setShowAdvanced]=
+    useState(false);
+
+  const [workflow,setWorkflow]=
+    useState(null);
+
+  const payload={
+    buyer,
+    supplier,
+    buyer_name:buyerName,
+    supplier_name:supplierName,
+    product_name:product,
+    quantity:+qty
+  };
+
+  const rfqText=
+    `Product: ${product}. Quantity: ${qty} units. Delivery target: ${buyer.delivery.target_days} days. Payment preference: Net ${buyer.payment.preferred_days}. Required uptime SLA: ${buyer.sla.minimum_uptime}%. Maximum SLA penalty: ${buyer.sla.maximum_penalty}%.`;
+
+  const loadAudit=async(
+    negotiationId
+  )=>{
+
+    if(!negotiationId){
+      return;
+    }
+
+    try{
+
+      const a=
+        await fetch(
+          `${API}/api/negotiations/${negotiationId}/audit`
+        );
+
+      if(a.ok){
+
+        const ad=
+          await a.json();
+
+        setAudit(
+          ad.events||[]
+        );
+      }
+
+    }catch{}
+
+    try{
+
+      const v=
+        await fetch(
+          `${API}/api/negotiations/${negotiationId}/audit/verify`
+        );
+
+      if(v.ok){
+
+        setAuditIntegrity(
+          await v.json()
+        );
+      }
+
+    }catch{}
+  };
+
+  const execute=async({
+    request,
+    demo=false
+  })=>{
+
+    setLoading(true);
+    setErr(null);
+    setResult(null);
+    setSecurity(null);
+    setAuditIntegrity(null);
+
+    setWorkflow({
+      status:"running",
+
+      stages:[
+        {
+          key:"read",
+          label:"READ",
+          state:"running"
+        },
+        {
+          key:"reason",
+          label:"REASON",
+          state:"pending"
+        },
+        {
+          key:"supplier_selection",
+          label:"SELECT",
+          state:"pending"
+        },
+        {
+          key:"act",
+          label:"ACT",
+          state:"pending"
+        },
+        {
+          key:"verify",
+          label:"VERIFY",
+          state:"pending"
+        }
+      ],
+
+      demo
+    });
+
+    try{
+
+      const r=
+        await fetch(
+          `${API}/api/autonomous/procure`,
+          {
+            method:"POST",
+
+            headers:{
+              "Content-Type":
+                "application/json"
+            },
+
+            body:
+              JSON.stringify(
+                request
+              )
+          }
+        );
+
+      if(!r.ok){
+
+        let message=
+          `Request failed (${r.status})`;
+
+        try{
+
+          const body=
+            await r.json();
+
+          message=
+            typeof body.detail==="string"
+            ?body.detail
+            :JSON.stringify(
+                body.detail
+                ||body
+              );
+
+        }catch{
+
+          try{
+
+            message=
+              await r.text();
+
+          }catch{}
+
+        }
+
+        throw new Error(
+          message
+        );
+      }
+
+      const d=
+        await r.json();
+
+      const s=
+        d.stages||{};
+
+      setWorkflow({
+
+        ...d,
+
+        status:
+          d.status
+          ||"complete",
+
+        stages:[
+
+          {
+            key:"read",
+            label:"READ",
+            state:
+              s.read
+              ||"complete"
+          },
+
+          {
+            key:"reason",
+            label:"REASON",
+            state:
+              s.reason
+              ||"complete"
+          },
+
+          {
+            key:"supplier_selection",
+            label:"SELECT",
+            state:
+              s.supplier_selection
+              ||"complete"
+          },
+
+          {
+            key:"act",
+            label:"ACT",
+            state:
+              s.act
+              ||(
+                d.final_action
+                ?"complete"
+                :"failed"
+              )
+          },
+
+          {
+            key:"verify",
+            label:"VERIFY",
+            state:
+              s.verify
+              ||(
+                d.verified
+                ?"complete"
+                :"failed"
+              )
+          }
+
+        ],
+
+        ranking:
+          d.supplier_ranking
+          ||[],
+
+        demo
+      });
+
+      const selected=
+        d.selected_supplier?.supplier;
+
+      if(selected?.name){
+
+        setSupplierName(
+          selected.name
+        );
+
+        if(selected.policy){
+
+          setSupplier(
+            selected.policy
+          );
+        }
+      }
+
+      const negotiation=
+        d.final_action?.negotiation
+        ||null;
+
+      setResult(
+        negotiation
+      );
+
+      await loadAudit(
+        d.final_action?.negotiation_id
+      );
+
+    }catch(e){
+
+      setErr(
+        e?.message
+        ||"Autonomous procurement failed."
+      );
+
+      setWorkflow(
+        w=>
+          w
+          ?{
+            ...w,
+
+            status:"error",
+
+            error:
+              e?.message
+              ||"Autonomous procurement failed.",
+
+            stages:
+              w.stages.map(
+                s=>
+                  s.state==="running"
+                  ?{
+                    ...s,
+                    state:"failed"
+                  }
+                  :s
+              )
+          }
+          :null
+      );
+
+    }finally{
+
+      setLoading(false);
+    }
+  };
+
+  const run=()=>{
+    return execute({
+      request:{
+        text:rfqText,
+
+        sources:[
+          ...SUPPLIER_SOURCES
+        ],
+
+        suppliers:
+          AUTONOMOUS_SUPPLIERS,
+
+        buyer,
+
+        buyer_name:
+          buyerName,
+
+        max_attempts:3,
+
+        minimum_confidence:0.4,
+
+        minimum_supplier_score:0.3,
+
+        execution_mode:"auto"
+      },
+
+      demo:true
+    });
+  };
+
+  const reset=()=>{
+
+    setResult(null);
+    setWorkflow(null);
+    setErr(null);
+    setAudit([]);
+    setAuditIntegrity(null);
+    setSecurity(null);
+  };
+
+  const lastBuyer=
+    result?.rounds?.at?.(-1)
+    ?.buyer;
+
+  const lastSupplier=
+    result?.rounds?.at?.(-1)
+    ?.supplier;
+
+  const lastMetrics=
+    result?.rounds?.at?.(-1)
+    ?.metrics;
+
+  const ri=
+    result?.risk
+    ||result?.risk_assessment
+    ||null;
+
+  return (
+    <div className="min-h-screen">
+
+      <header className="border-b border-white/5">
+
+        <div className="max-w-7xl mx-auto px-5 py-5">
+
+          <div className="flex flex-wrap items-center justify-between gap-4">
+
+            <div>
+
+              <div className="flex items-center gap-3">
+
+                <div className="h-10 w-10 rounded-xl bg-indigo-600 grid place-items-center text-white font-black">
+                  N
+                </div>
+
+                <div>
+
+                  <h1 className="text-xl font-black">
+                    NEXORA
+                  </h1>
+
+                  <p className="text-[10px] uppercase tracking-[.2em] text-gray-500">
+                    Autonomous B2B procurement
+                  </p>
+
+                </div>
+
+              </div>
+
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-purple-950 text-purple-300">
+                ANAKIN · LIVE WEB
+              </span>
+
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-white/5 text-gray-400">
+                READ
+              </span>
+
+              <span className="text-[10px] text-gray-600">
+                →
+              </span>
+
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-white/5 text-gray-400">
+                REASON
+              </span>
+
+              <span className="text-[10px] text-gray-600">
+                →
+              </span>
+
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-white/5 text-gray-400">
+                SELECT
+              </span>
+
+              <span className="text-[10px] text-gray-600">
+                →
+              </span>
+
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-white/5 text-gray-400">
+                ACT
+              </span>
+
+              <span className="text-[10px] text-gray-600">
+                →
+              </span>
+
+              <span className="text-[10px] px-2.5 py-1 rounded-full bg-white/5 text-gray-400">
+                VERIFY
+              </span>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </header>
+
+      <main className="max-w-7xl mx-auto px-5 py-6 space-y-5">
+
+        <section className="glass rounded-3xl p-6 md:p-8">
+
+          <div className="grid lg:grid-cols-[1.3fr_.7fr] gap-8 items-center">
+
+            <div>
+
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-950 text-indigo-300 text-[10px] font-black uppercase tracking-widest">
+                Autonomous procurement agent
+              </div>
+
+              <h2 className="text-4xl md:text-5xl font-black leading-tight mt-4">
+                Procurement that
+                <span className="text-indigo-400">
+                  {" "}reads, reasons,
+                </span>
+                <br/>
+                acts, and verifies.
+              </h2>
+
+              <p className="text-sm text-gray-500 mt-4 max-w-2xl leading-relaxed">
+                Nexora transforms a procurement request into an autonomous supplier decision, negotiation, contract, and independently verified result.
+              </p>
+
+              <div className="flex flex-wrap gap-3 mt-6">
+
+                <button
+                  className="btn btn-primary"
+                  onClick={run}
+                  disabled={loading}
+                >
+                  {loading
+                    ?"Running Nexora..."
+                    :"⚡ Run autonomous procurement"
+                  }
+                </button>
+
+                <button
+                  className="btn btn-secondary"
+                  onClick={()=>setShowAdvanced(!showAdvanced)}
+                >
+                  {showAdvanced
+                    ?"Hide controls"
+                    :"Show controls"
+                  }
+                  {" "}▾
+                </button>
+
+              </div>
+
+              {loading&&
+
+                <div className="mt-4 flex items-center gap-2 text-xs text-indigo-300">
+                  <span className="pulse">
+                    ●
+                  </span>
+                  Nexora is executing the procurement workflow...
+                </div>
+
+              }
+
+              {err&&
+
+                <div className="mt-4 rounded-xl border border-red-900/30 bg-red-950/20 p-3 text-xs text-red-300">
+                  {err}
+                </div>
+
+              }
+
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+
+              <div className="kpi rounded-2xl p-4">
+                <div className="text-[10px] text-gray-500">
+                  AGENT
+                </div>
+                <div className="text-2xl font-black mt-1">
+                  LYZR
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Buyer + supplier runtime
+                </div>
+              </div>
+
+              <div className="kpi rounded-2xl p-4">
+                <div className="text-[10px] text-gray-500">
+                  WEB EVIDENCE
+                </div>
+                <div className="text-2xl font-black mt-1">
+                  ANAKIN
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Live supplier pages
+                </div>
+              </div>
+
+              <div className="kpi rounded-2xl p-4">
+                <div className="text-[10px] text-gray-500">
+                  GOVERNANCE
+                </div>
+                <div className="text-2xl font-black mt-1">
+                  ON
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Policy + legal + risk
+                </div>
+              </div>
+
+              <div className="kpi rounded-2xl p-4">
+                <div className="text-[10px] text-gray-500">
+                  RECOVERY
+                </div>
+                <div className="text-2xl font-black mt-1">
+                  AUTO
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Bounded supplier retry
+                </div>
+              </div>
+
+              <div className="kpi rounded-2xl p-4">
+                <div className="text-[10px] text-gray-500">
+                  VERIFICATION
+                </div>
+                <div className="text-2xl font-black mt-1">
+                  HARD
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Independent validation
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+
+        </section>
+
+        <details
+          className="glass rounded-3xl p-5 md:p-6"
+          open={showAdvanced}
+        >
+
+          <summary>
+            <div className="flex items-center justify-between gap-4">
+
+              <div>
+
+                <p className="text-[11px] uppercase tracking-widest text-gray-500">
+                  Procurement configuration
+                </p>
+
+                <h3 className="text-lg font-black mt-1">
+                  Buyer and supplier controls
+                </h3>
+
+                <p className="text-xs text-gray-500 mt-1">
+                  Private negotiation policy stays isolated from the other party. Public supplier pages are read live through Anakin; negotiation policies shown here are the bounded demo policies used by Nexora.
+                </p>
+
+              </div>
+
+              <span className="text-xs text-indigo-300 font-bold">
+                {showAdvanced
+                  ?"Hide controls"
+                  :"Show controls"
+                } ▾
+              </span>
+
+            </div>
+          </summary>
+
+          <div className="grid lg:grid-cols-2 gap-4 mt-5">
+
+            <PolicyForm
+              label="Buyer Policy"
+              defaults={BUYER_DEF}
+              onChange={setBuyer}
+            />
+
+            <PolicyForm
+              label="Supplier Policy"
+              defaults={SUPP_DEF}
+              onChange={setSupplier}
+            />
+
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-4 mt-4">
+
+            <div>
+
+              <label>
+                Buyer name
+              </label>
+
+              <input
+                className="friendly-input"
+                value={buyerName}
+                onChange={
+                  e=>setBuyerName(
+                    e.target.value
+                  )
+                }
+              />
+
+            </div>
+
+            <div>
+
+              <label>
+                Supplier name
+              </label>
+
+              <input
+                className="friendly-input"
+                value={supplierName}
+                onChange={
+                  e=>setSupplierName(
+                    e.target.value
+                  )
+                }
+              />
+
+            </div>
+
+            <div>
+
+              <label>
+                Quantity
+              </label>
+
+              <input
+                className="friendly-input"
+                type="number"
+                min="1"
+                value={qty}
+                onChange={
+                  e=>setQty(
+                    e.target.value
+                  )
+                }
+              />
+
+            </div>
+
+          </div>
+
+          <div className="mt-4">
+
+            <label>
+              Product
+            </label>
+
+            <input
+              className="friendly-input"
+              value={product}
+              onChange={
+                e=>setProduct(
+                  e.target.value
+                )
+              }
+            />
+
+          </div>
+
+        </details>
+
+        {workflow&&
+          <DecisionTrace
+            workflow={workflow}
+          />
+        }
+
+        {result&&
+
+          <>
+
+            <section className="glass rounded-3xl p-5 md:p-6">
+
+              <div className="flex flex-wrap items-start justify-between gap-4">
+
+                <div>
+
+                  <p className="text-[11px] uppercase tracking-[.18em] text-indigo-300 font-bold">
+                    Negotiation result
+                  </p>
+
+                  <h3 className="text-2xl font-black mt-1">
+                    {result.status
+                      ?"Agreement "
+                      +String(
+                        result.status
+                      ).toLowerCase()
+                      :"Completed"
+                    }
+                  </h3>
+
+                  <p className="text-xs text-gray-500 mt-2">
+                    Autonomous negotiation output from Nexora's existing negotiation engine.
+                  </p>
+
+                </div>
+
+                <Badge
+                  text={
+                    result.status
+                    ||"COMPLETE"
+                  }
+                  type={
+                    result.status
+                  }
+                />
+
+              </div>
+
+              <div className="grid md:grid-cols-4 gap-3 mt-6">
+
+                <div className="kpi rounded-2xl p-4">
+
+                  <div className="text-[10px] text-gray-500">
+                    PRICE
+                  </div>
+
+                  <div className="text-2xl font-black mt-1">
+                    ₹{Number(
+                      lastBuyer?.price
+                      ??
+                      lastSupplier?.price
+                      ??
+                      0
+                    ).toLocaleString()}
+                  </div>
+
+                  <div className="text-xs text-gray-500 mt-1">
+                    Latest negotiated price
+                  </div>
+
+                </div>
+
+                <div className="kpi rounded-2xl p-4">
+
+                  <div className="text-[10px] text-gray-500">
+                    DELIVERY
+                  </div>
+
+                  <div className="text-2xl font-black mt-1">
+                    {lastBuyer?.delivery_days
+                      ??
+                      lastSupplier?.delivery_days
+                      ??
+                      "—"
+                    }{" "}
+                    days
+                  </div>
+
+                  <div className="text-xs text-gray-500 mt-1">
+                    Agreed timeline
+                  </div>
+
+                </div>
+
+                <div className="kpi rounded-2xl p-4">
+
+                  <div className="text-[10px] text-gray-500">
+                    PAYMENT
+                  </div>
+
+                  <div className="text-2xl font-black mt-1">
+                    Net{" "}
+                    {lastBuyer?.payment_days
+                      ??
+                      lastSupplier?.payment_days
+                      ??
+                      "—"
+                    }
+                  </div>
+
+                  <div className="text-xs text-gray-500 mt-1">
+                    Payment term
+                  </div>
+
+                </div>
+
+                <div className="kpi rounded-2xl p-4">
+
+                  <div className="text-[10px] text-gray-500">
+                    RISK
+                  </div>
+
+                  <div
+                    className={`text-2xl font-black mt-1 ${
+                      ri?.label==="LOW"
+                      ?"text-emerald-300"
+                      :ri?.label==="MEDIUM"
+                      ?"text-yellow-300"
+                      :"text-red-300"
+                    }`}
+                  >
+                    {ri?.label||"—"}
+                  </div>
+
+                  <div className="text-xs text-gray-500 mt-1">
+                    Policy risk level
+                  </div>
+
+                </div>
+
+              </div>
+
+            </section>
+
+            {result.contract&&
+
+              <ContractCard
+                contract={
+                  result.contract
+                }
+                negId={
+                  result.negotiation_id
+                }
+              />
+
+            }
+
+            <details
+              className="glass rounded-3xl p-5 md:p-6"
+            >
+
+              <summary>
+
+                <div className="flex items-center justify-between gap-4">
+
+                  <div>
+
+                    <p className="text-[11px] uppercase tracking-widest text-gray-500">
+                      Optional detail
+                    </p>
+
+                    <h3 className="text-lg font-black mt-1">
+                      See how the agents negotiated
+                    </h3>
+
+                    <p className="text-xs text-gray-500 mt-1">
+                      Charts, round-by-round proposals, trust checks, and audit history.
+                    </p>
+
+                  </div>
+
+                  <span className="text-xs text-indigo-300 font-bold">
+                    Open details ▾
+                  </span>
+
+                </div>
+
+              </summary>
+
+              <div className="mt-5 grid md:grid-cols-5 gap-3">
+
+                <div className="kpi rounded-2xl p-4">
+
+                  <div className="text-[10px] text-gray-500">
+                    ROUNDS
+                  </div>
+
+                  <div className="text-xl font-black mt-1">
+                    {result.rounds?.length||0}
+                  </div>
+
+                </div>
+
+                <div className="kpi rounded-2xl p-4">
+
+                  <div className="text-[10px] text-gray-500">
+                    CONVERGENCE
+                  </div>
+
+                  <div className="text-xl font-black mt-1">
+                    {Math.round(
+                      (
+                        result.convergence
+                        ?.convergence_ratio
+                        ||0
+                      )*100
+                    )}%
+                  </div>
+
+                </div>
+
+                <div className="kpi rounded-2xl p-4">
+
+                  <div className="text-[10px] text-gray-500">
+                    JOINT UTILITY
+                  </div>
+
+                  <div className="text-xl font-black text-emerald-300 mt-1">
+                    {Math.round(
+                      (
+                        lastMetrics
+                        ?.joint_utility
+                        ||0
+                      )*100
+                    )}%
+                  </div>
+
+                </div>
+
+                <div className="kpi rounded-2xl p-4">
+
+                  <div className="text-[10px] text-gray-500">
+                    GOVERNANCE
+                  </div>
+
+                  <div className="text-sm font-black mt-2">
+                    {result.governance
+                      ?.external_responsible_ai_configured
+                      ?"EXTERNAL GOVERNANCE"
+                      :"LOCAL FIREWALL"
+                    }
+                  </div>
+
+                </div>
+
+                <div className="kpi rounded-2xl p-4">
+
+                  <div className="text-[10px] text-gray-500">
+                    AUDIT
+                  </div>
+
+                  <div
+                    className={`text-sm font-black mt-2 ${
+                      auditIntegrity?.valid
+                      ?"text-emerald-300"
+                      :"text-yellow-300"
+                    }`}
+                  >
+                    {auditIntegrity?.valid
+                      ?"✓ VERIFIED"
+                      :"CHECKED"
+                    }
+                  </div>
+
+                </div>
+
+              </div>
+
+              <section className="glass rounded-2xl p-5 mt-4">
+
+                <div className="flex flex-wrap gap-2 border-b border-white/10 pb-3 mb-4">
+
+                  {[
+                    [
+                      "arena",
+                      "📈 Deal path"
+                    ],
+                    [
+                      "rounds",
+                      "📋 Round history"
+                    ],
+                    [
+                      "audit",
+                      "🔒 Trust & audit"
+                    ]
+                  ].map(
+                    ([k,l])=>
+
+                      <button
+                        key={k}
+                        onClick={
+                          ()=>setTab(k)
+                        }
+                        className={`px-4 py-2 rounded-full text-xs font-bold ${
+                          tab===k
+                          ?"bg-indigo-600 text-white"
+                          :"text-gray-400 hover:text-white"
+                        }`}
+                      >
+                        {l}
+                      </button>
+                  )}
+
+                </div>
+
+                {tab==="arena"
+
+                  ?<NegotiationChart
+                    rounds={
+                      result.rounds
+                    }
+                  />
+
+                  :tab==="rounds"
+
+                  ?<Rounds
+                    rounds={
+                      result.rounds
+                    }
+                  />
+
+                  :<>
+                    <Audit
+                      events={audit}
+                    />
+
+                    <div className="flex justify-end mt-3">
+
+                      <span
+                        className={`text-xs font-bold ${
+                          auditIntegrity?.valid
+                          ?"text-emerald-300"
+                          :"text-red-300"
+                        }`}
+                      >
+                        {auditIntegrity?.valid
+                          ?"✓ HASH CHAIN VERIFIED"
+                          :"✕ AUDIT INTEGRITY FAILED"
+                        }
+
+                        {" · "}
+
+                        {auditIntegrity?.events
+                          ||0
+                        } events
+
+                      </span>
+
+                    </div>
+
+                  </>
+
+                }
+
+              </section>
+
+              <div className="grid lg:grid-cols-2 gap-4 mt-4">
+
+                <AgentPanel
+                  name={buyerName}
+                  role="buyer"
+                  policy={buyer}
+                  latest={lastBuyer}
+                  metrics={
+                    lastMetrics
+                    ?.buyer_utility
+                  }
+                />
+
+                <AgentPanel
+                  name={supplierName}
+                  role="supplier"
+                  policy={supplier}
+                  latest={lastSupplier}
+                  metrics={
+                    lastMetrics
+                    ?.supplier_utility
+                  }
+                />
+
+              </div>
+
+              <ParetoPanel
+                pareto={
+                  result.pareto
+                }
+              />
+
+            </details>
+
+          </>
+
+        }
+
+        <details className="glass rounded-3xl p-5 md:p-6">
+
+          <summary>
+
+            <div className="flex items-center justify-between gap-4">
+
+              <div>
+
+                <p className="text-[11px] uppercase tracking-widest text-gray-500">
+                  For testing & demos
+                </p>
+
+                <h3 className="text-lg font-black mt-1">
+                  Security & multi-supplier tools
+                </h3>
+
+                <p className="text-xs text-gray-500 mt-1">
+                  Red-team guardrail testing and 3-supplier RFQ are kept out of the main workflow.
+                </p>
+
+              </div>
+
+              <span className="text-xs text-indigo-300 font-bold">
+                Open tools ▾
+              </span>
+
+            </div>
+
+          </summary>
+
+          <div className="grid lg:grid-cols-2 gap-5 mt-5">
+
+            <SecurityPanel
+              request={payload}
+              security={security}
+              setSecurity={setSecurity}
+            />
+
+            <RFQPanel
+              payload={payload}
+            />
+
+          </div>
+
+        </details>
+
+        <details className="glass rounded-3xl p-5 md:p-6">
+
+          <summary>
+
+            <div className="flex items-center justify-between gap-4">
+
+              <div>
+
+                <p className="text-[11px] uppercase tracking-widest text-gray-500">
+                  Technical information
+                </p>
+
+                <h3 className="text-lg font-black mt-1">
+                  How Nexora is governed
+                </h3>
+
+                <p className="text-xs text-gray-500 mt-1">
+                  A closer look at the agent, validation, and audit boundaries.
+                </p>
+
+              </div>
+
+              <span className="text-xs text-indigo-300 font-bold">
+                Open architecture ▾
+              </span>
+
+            </div>
+
+          </summary>
+
+          <div className="mt-5">
+
+            <SystemArchitecture/>
+
+          </div>
+
+        </details>
+
+        {!result&&!loading&&!err&&
+
+          <div className="text-center py-8 text-gray-500">
+
+            <div className="text-4xl mb-3">
+              🧠
+            </div>
+
+            <p className="text-sm">
+              Your autonomous procurement run is ready.
+            </p>
+
+            <p className="text-xs mt-2">
+              One action will execute READ → REASON → SELECT → ACT → VERIFY using the existing Nexora negotiation engine.
+            </p>
+
+          </div>
+
+        }
+
+        {result&&
+
+          <div className="flex justify-end">
+
+            <button
+              className="btn btn-secondary"
+              onClick={reset}
+            >
+              ↺ Start another deal
+            </button>
+
+          </div>
+
+        }
+
+      </main>
+
+    </div>
+  );
+}
+
+ReactDOM
+  .createRoot(
+    document.getElementById(
+      "root"
+    )
+  )
+  .render(
+    <App/>
+  );
+</script>
+</body>
+</html>

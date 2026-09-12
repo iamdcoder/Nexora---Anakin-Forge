@@ -1,0 +1,70 @@
+services:
+
+  - type: web
+    name: nexora-negotiator
+    env: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health
+
+    envVars:
+
+      - key: LYZR_API_KEY
+        sync: false
+
+      - key: BUYER_AGENT_ID
+        value: 6aa055144dee8f87a280eb21
+
+      - key: SUPPLIER_AGENT_ID
+        value: 6aa055ad7322addc1448fa6a
+
+      - key: LYZR_REASONING_AGENT_ID
+        sync: false
+
+      - key: LYZR_USER_ID
+        value: nexora-system
+
+      - key: LYZR_BASE_URL
+        value: https://agent-prod.studio.lyzr.ai
+
+      - key: LYZR_AI_REASONING_ENABLED
+        value: "1"
+
+      - key: LYZR_RESPONSIBLE_AI_ENABLED
+        value: "1"
+
+      - key: LYZR_USE_SDK
+        value: "1"
+
+      - key: LYZR_SDK_FALLBACK
+        value: "1"
+
+      - key: LYZR_VERIFY_AGENT_FEATURES
+        value: "1"
+
+      - key: LYZR_GOVERNANCE_TIMEOUT
+        value: "8"
+
+      - key: CORS_ORIGINS
+        value: "*"
+
+      - key: PUBLIC_BASE_URL
+        sync: false
+
+      - key: ANAKIN_ENABLED
+        value: "1"
+
+      - key: ANAKIN_API_KEY
+        sync: false
+
+      - key: ANAKIN_BASE_URL
+        value: https://api.anakin.io/v1
+
+      - key: ANAKIN_TIMEOUT
+        value: "20"
+
+      - key: ANAKIN_USE_BROWSER
+        value: "0"
+
+      - key: ANAKIN_FALLBACK_DIRECT
+        value: "1"

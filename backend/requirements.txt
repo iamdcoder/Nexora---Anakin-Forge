@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+requests
+reportlab
+python-dotenv
+pytest
+httpx
+lyzr-adk

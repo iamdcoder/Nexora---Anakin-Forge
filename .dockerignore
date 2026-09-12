@@ -1,0 +1,10 @@
+.git
+.gitignore
+.pytest_cache
+**/__pycache__
+backend/.venv
+.env
+backend/data/*.jsonl
+backend/data/*.pdf
+node_modules
+*.zip
