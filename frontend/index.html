@@ -428,6 +428,30 @@ function UtilityBar({value,label}){
   );
 }
 
+function PolicyField({
+  value,
+  label,
+  min,
+  max,
+  step=1,
+  onChange
+}){
+  return (
+    <div>
+      <label>{label}</label>
+
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value ?? ""}
+        onChange={onChange}
+      />
+    </div>
+  );
+}
+
 function PolicyForm({label,defaults,onChange}){
   const [d,setD]=useState(defaults);
 
@@ -456,46 +480,15 @@ function PolicyForm({label,defaults,onChange}){
         }
 
         cur[parts.at(-1)] =
-          isNaN(val)
-          ?val
-          :+val;
+          val === ""
+          ? ""
+          : isNaN(val)
+            ?val
+            :+val;
 
         return n;
       }
     );
-
-  const F=({
-    p,
-    l,
-    min,
-    max,
-    step=1
-  })=>
-    <div>
-      <label>{l}</label>
-
-      <input
-        type="number"
-        min={min}
-        max={max}
-        step={step}
-        value={
-          p
-            .split(".")
-            .reduce(
-              (o,k)=>o?.[k],
-              d
-            )
-          ??""
-        }
-        onChange={
-          e=>up(
-            p,
-            e.target.value
-          )
-        }
-      />
-    </div>;
 
   const buyer=
     label
@@ -525,77 +518,94 @@ function PolicyForm({label,defaults,onChange}){
 
       <div className="grid grid-cols-2 gap-3">
 
-        <F
-          p="price.target"
-          l="Target Price (₹)"
+        <PolicyField
+          value={d.price.target}
+          label="Target Price (₹)"
           min={1}
+          onChange={e=>up("price.target",e.target.value)}
         />
 
-        <F
-          p={
+        <PolicyField
+          value={
             buyer
-            ?"price.maximum"
-            :"price.minimum"
+            ?d.price.maximum
+            :d.price.minimum
           }
-          l={
+          label={
             buyer
             ?"Max Price (₹)"
             :"Min Price (₹)"
           }
           min={1}
+          onChange={
+            e=>up(
+              buyer
+              ?"price.maximum"
+              :"price.minimum",
+              e.target.value
+            )
+          }
         />
 
-        <F
-          p="delivery.target_days"
-          l="Delivery Target"
+        <PolicyField
+          value={d.delivery.target_days}
+          label="Delivery Target"
           min={1}
+          onChange={e=>up("delivery.target_days",e.target.value)}
         />
 
-        <F
-          p="delivery.maximum_days"
-          l="Max Delivery"
+        <PolicyField
+          value={d.delivery.maximum_days}
+          label="Max Delivery"
           min={1}
+          onChange={e=>up("delivery.maximum_days",e.target.value)}
         />
 
-        <F
-          p="payment.preferred_days"
-          l="Preferred Net"
+        <PolicyField
+          value={d.payment.preferred_days}
+          label="Preferred Net"
           min={1}
+          onChange={e=>up("payment.preferred_days",e.target.value)}
         />
 
-        <F
-          p="payment.minimum_days"
-          l="Min Net"
+        <PolicyField
+          value={d.payment.minimum_days}
+          label="Min Net"
           min={1}
+          onChange={e=>up("payment.minimum_days",e.target.value)}
         />
 
-        <F
-          p="sla.minimum_uptime"
-          l="Min Uptime %"
+        <PolicyField
+          value={d.sla.minimum_uptime}
+          label="Min Uptime %"
           min={95}
           max={100}
           step={0.5}
+          onChange={e=>up("sla.minimum_uptime",e.target.value)}
         />
 
-        <F
-          p="sla.maximum_penalty"
-          l="Max Penalty %"
+        <PolicyField
+          value={d.sla.maximum_penalty}
+          label="Max Penalty %"
           min={0}
           step={0.5}
+          onChange={e=>up("sla.maximum_penalty",e.target.value)}
         />
 
-        <F
-          p="max_rounds"
-          l="Max Rounds"
+        <PolicyField
+          value={d.max_rounds}
+          label="Max Rounds"
           min={1}
           max={20}
+          onChange={e=>up("max_rounds",e.target.value)}
         />
 
-        <F
-          p="sla.minimum_penalty"
-          l="Min Penalty %"
+        <PolicyField
+          value={d.sla.minimum_penalty}
+          label="Min Penalty %"
           min={0}
           step={0.5}
+          onChange={e=>up("sla.minimum_penalty",e.target.value)}
         />
 
       </div>
