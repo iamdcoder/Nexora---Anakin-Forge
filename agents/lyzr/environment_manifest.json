@@ -1,0 +1,12 @@
+{
+  "name": "Nexora Governed Negotiation Environment",
+  "separation": {
+    "environment": "Private buyer/supplier session boundary plus redacted shared negotiation context",
+    "agent": "Two independent Lyzr Studio agents with distinct agent IDs",
+    "inference": "Lyzr ADK agent.run(session_id, user_id) with documented Agent API fallback"
+  },
+  "buyer_agent_id_env": "BUYER_AGENT_ID",
+  "supplier_agent_id_env": "SUPPLIER_AGENT_ID",
+  "policy_authority": "Deterministic application validators; LLM output is advisory until validated",
+  "contract_authority": "Governed negotiation state machine only"
+}
